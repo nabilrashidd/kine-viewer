@@ -1,0 +1,2642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;padding:0}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style>
+<title>Pod Gait Viewer 12</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Single visual world on purpose: a gait-lab instrument panel. Every colour
+   is painted explicitly so the page holds on either host ground. */
+:root{
+  --bg:#0E1116;
+  --surface:#161B22;
+  --surface-2:#1C222B;
+  --raised:#232B36;
+  --line:#2A3340;
+  --line-soft:#212934;
+  --text:#E6EAF1;
+  --muted:#8C99AB;
+  --dim:#5F6B7C;
+  --accent:#FF8A3D;
+  --accent-dim:#7A4520;
+  --ax-x:#FF5A5F;
+  --ax-y:#54DE93;
+  --ax-z:#4EA8FF;
+  --stance:#FF8A3D;
+  --flight:#4EA8FF;
+  --ok:#54DE93;
+  --warn:#FFC24E;
+  --bad:#FF5A5F;
+
+  --f-display:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --f-body:"IBM Plex Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --f-mono:"IBM Plex Mono","SF Mono",Menlo,Consolas,monospace;
+
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  -webkit-text-size-adjust:100%;   /* iOS inflates text in one-column layouts */
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--f-body);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;color:inherit}
+
+/* ---------- shell ---------- */
+.app{
+  min-height:100vh;
+  min-height:100dvh;          /* iOS: 100vh is the TALL viewport, not the visible one */
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr);
+}
+
+header.bar{
+  display:flex;
+  align-items:center;
+  gap:18px;
+  flex-wrap:wrap;
+  padding:12px 20px;
+  background:var(--surface);
+  border-bottom:1px solid var(--line);
+}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{
+  font-family:var(--f-display);
+  font-size:16px;
+  font-weight:700;
+  letter-spacing:.01em;
+  margin:0;
+}
+.brand .sub{
+  font-family:var(--f-mono);
+  font-size:11px;
+  color:var(--dim);
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.chips{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.chip{
+  display:inline-flex;align-items:center;gap:7px;
+  font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;
+  text-transform:uppercase;
+  padding:5px 10px;
+  border:1px solid var(--line);
+  background:var(--surface-2);
+  color:var(--muted);
+}
+.chip .dot{width:7px;height:7px;background:var(--dim)}
+.chip.live{color:var(--text);border-color:var(--accent-dim)}
+.chip.live .dot{background:var(--accent)}
+.chip.sim .dot{background:var(--flight)}
+
+.main{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 344px;
+  min-height:0;
+}
+@media (max-width:900px){
+  .main{grid-template-columns:minmax(0,1fr)}
+}
+
+/* ---------- stage ---------- */
+.stage{
+  position:relative;
+  min-height:420px;
+  background:
+    radial-gradient(120% 90% at 50% 15%, #1A212B 0%, #0E1116 62%, #0B0E12 100%);
+  border-right:1px solid var(--line);
+  overflow:hidden;
+}
+#scene{display:block;width:100%;height:100%;cursor:grab;touch-action:none}
+#scene:active{cursor:grabbing}
+
+.stage-overlay{
+  position:absolute;inset:0;
+  pointer-events:none;
+  padding:14px 16px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+}
+.plane-row{display:flex;gap:6px;pointer-events:auto;flex-wrap:wrap}
+.plane{
+  font-family:var(--f-mono);font-size:10.5px;letter-spacing:.05em;
+  text-transform:uppercase;
+  padding:5px 9px;
+  background:rgba(22,27,34,.82);
+  border:1px solid var(--line);
+  color:var(--muted);
+  cursor:pointer;
+}
+.plane:hover{color:var(--text);border-color:var(--raised)}
+.plane[aria-pressed="true"]{color:var(--bg);background:var(--accent);border-color:var(--accent)}
+.plane:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.legend{
+  display:flex;gap:14px;align-items:center;
+  font-family:var(--f-mono);font-size:10.5px;color:var(--dim);
+  letter-spacing:.04em;
+}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:2px;display:inline-block}
+
+/* ---------- timeline ---------- */
+.timeline{
+  padding:10px 16px 14px;
+  background:var(--surface);
+  border-top:1px solid var(--line);
+}
+.tl-head{
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--dim);
+  margin-bottom:7px;
+}
+.tl-track{
+  position:relative;height:26px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+}
+.tl-stance{position:absolute;top:0;bottom:0;left:0;background:rgba(255,138,61,.22);border-right:1px solid var(--accent-dim)}
+.tl-flight-label,.tl-stance-label{
+  position:absolute;top:5px;
+  font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted);
+}
+.tl-cursor{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text)}
+.tl-events{position:relative;height:16px;margin-top:4px}
+.tl-ev{
+  position:absolute;transform:translateX(-50%);
+  font-family:var(--f-mono);font-size:9.5px;color:var(--dim);
+  letter-spacing:.03em;white-space:nowrap;
+}
+.tl-ev::before{
+  content:"";position:absolute;left:50%;top:-5px;width:1px;height:4px;background:var(--line);
+}
+
+/* ---------- side panel ---------- */
+.panel{
+  background:var(--surface);
+  display:flex;flex-direction:column;
+  min-height:0;
+  overflow-y:auto;
+}
+section.block{border-bottom:1px solid var(--line);padding:16px}
+section.block > h2{
+  font-family:var(--f-mono);
+  font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--dim);
+  margin:0 0 12px;
+}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:9px 12px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  font-size:13px;font-weight:500;
+  cursor:pointer;
+  width:100%;
+}
+.btn:hover{background:var(--raised)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#17110A;font-weight:600}
+.btn.primary:hover{background:#FF9C58}
+.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn[disabled]{opacity:.42;cursor:not-allowed}
+
+.note{
+  font-size:12px;color:var(--muted);margin:10px 0 0;line-height:1.45;
+}
+.note code{font-family:var(--f-mono);font-size:11.5px;color:var(--text)}
+
+/* readouts */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line-soft)}
+.cell{background:var(--surface);padding:9px 10px}
+.cell .k{
+  font-family:var(--f-mono);font-size:9.5px;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--dim);display:block;
+}
+.cell .v{
+  font-family:var(--f-mono);font-size:17px;font-weight:500;
+  font-variant-numeric:tabular-nums;
+  display:block;margin-top:2px;
+}
+.cell .u{font-size:11px;color:var(--muted);margin-left:3px}
+
+.angles{display:flex;flex-direction:column;gap:9px}
+.angle{display:grid;grid-template-columns:104px 1fr 58px;align-items:center;gap:10px}
+.angle .lab{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.angle .bar{position:relative;height:6px;background:var(--surface-2);border:1px solid var(--line-soft)}
+.angle .bar .zero{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line)}
+.angle .bar .fill{position:absolute;top:0;bottom:0;background:var(--accent)}
+.angle .num{font-family:var(--f-mono);font-size:12.5px;font-variant-numeric:tabular-nums;text-align:right}
+
+.strip-wrap{display:flex;flex-direction:column;gap:10px}
+.strip{position:relative}
+.strip .cap{
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-family:var(--f-mono);font-size:10px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--dim);margin-bottom:4px;
+}
+.strip canvas{display:block;width:100%;height:68px;background:var(--surface-2);border:1px solid var(--line-soft)}
+
+.ctrl{display:flex;flex-direction:column;gap:12px}
+.slider{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:baseline}
+.slider label{font-family:var(--f-mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.slider output{font-family:var(--f-mono);font-size:12px;font-variant-numeric:tabular-nums}
+.slider input{grid-column:1/-1;width:100%;accent-color:var(--accent);margin:0}
+.toggles{display:flex;gap:8px;flex-wrap:wrap}
+.toggle{
+  font-family:var(--f-mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;
+  padding:5px 9px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);cursor:pointer;
+}
+.toggle[aria-pressed="true"]{color:var(--text);border-color:var(--accent-dim);background:var(--raised)}
+.toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* LED ring — the preview and the program list come from SIDS_LED_Ring.html */
+#ledring{display:block;width:100%;max-width:150px;aspect-ratio:1;margin:0 auto 12px}
+.leds{display:flex;flex-direction:column;gap:1px;background:var(--line-soft);border:1px solid var(--line-soft)}
+.led{
+  display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:9px;
+  padding:8px 9px;background:var(--surface);border:0;text-align:left;cursor:pointer;font-size:12.5px;color:var(--text);
+}
+.led:hover{background:var(--surface-2)}
+.led[aria-pressed="true"]{background:var(--raised);box-shadow:inset 3px 0 0 var(--accent)}
+.led .t{display:flex;flex-direction:column;min-width:0}
+.led .t b{font-weight:500}
+.led .t small{font-size:10.5px;color:var(--muted);line-height:1.3}
+.led .k{font-family:var(--f-mono);font-size:10.5px;color:var(--dim);border:1px solid var(--line);padding:1px 5px;font-variant-numeric:tabular-nums}
+.led[aria-pressed="true"] .k{color:var(--text);border-color:var(--accent)}
+.led[disabled]{opacity:.45;cursor:not-allowed}
+.led-group{font-family:var(--f-mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);padding:8px 9px 4px;background:var(--surface)}
+.ledlog{
+  font-family:var(--f-mono);font-size:10.5px;color:var(--dim);
+  margin-top:8px;min-height:1.4em;
+}
+
+/* fatigue watch */
+.hero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:center;margin-bottom:12px}
+.hero .num{
+  font-family:var(--f-mono);font-size:40px;font-weight:600;line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.hero .num.ok{color:var(--ok)} .hero .num.warn{color:var(--warn)} .hero .num.bad{color:var(--bad)}
+.hero .sub{font-size:12.5px;color:var(--muted);line-height:1.4}
+.hero .sub b{color:var(--text);font-weight:500;display:block}
+.alertbar{
+  display:flex;align-items:center;gap:9px;margin:0 0 12px;padding:9px 11px;
+  border:1px solid var(--warn);background:rgba(30,25,15,.55);
+  font-size:12.5px;line-height:1.4;color:var(--warn);
+}
+.alertbar i{width:7px;height:7px;border-radius:50%;background:var(--warn);flex:0 0 auto}
+.alertbar b{font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;
+  text-transform:uppercase;font-weight:600}
+.alertbar span{color:var(--text)}
+#drift-chart{display:block;width:100%;height:132px;background:var(--surface-2);
+             border:1px solid var(--line-soft);cursor:crosshair}
+.chart-cap{
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-family:var(--f-mono);font-size:10px;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--dim);margin:6px 0 0;
+}
+
+/* trust panel */
+.checks{display:flex;flex-direction:column;gap:1px;background:var(--line-soft)}
+.check{
+  display:grid;grid-template-columns:9px 1fr auto;align-items:baseline;gap:9px;
+  background:var(--surface);padding:8px 2px 8px 0;
+}
+.check i{width:7px;height:7px;border-radius:50%;background:var(--dim);align-self:center}
+.check.ok i{background:var(--ok)} .check.warn i{background:var(--warn)}
+.check.bad i{background:var(--bad)}
+.check .n{font-size:12.5px}
+.check .d{
+  font-family:var(--f-mono);font-size:10.5px;color:var(--muted);
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+.check.bad .d{color:var(--bad)} .check.warn .d{color:var(--warn)}
+
+/* the badge that admits the viewer has stopped believing itself */
+.badge{
+  position:absolute;top:14px;right:16px;pointer-events:none;
+  font-family:var(--f-mono);font-size:10.5px;letter-spacing:.04em;
+  text-transform:uppercase;padding:6px 10px;
+  border:1px solid var(--bad);background:rgba(28,18,20,.9);color:var(--bad);
+  max-width:230px;line-height:1.4;
+}
+.badge.warn{border-color:var(--warn);color:var(--warn);background:rgba(30,25,15,.9)}
+
+.status-line{
+  font-family:var(--f-mono);font-size:11.5px;color:var(--muted);
+  padding:10px 16px;border-top:1px solid var(--line);background:var(--surface-2);
+}
+.status-line b{color:var(--text);font-weight:500}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important}
+}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <h1>Pod Gait Viewer</h1>
+      <span class="sub">XIAO nRF52840 Sense &middot; instep mount</span>
+    </div>
+    <div class="chips">
+      <span class="chip sim" id="chip-source"><i class="dot"></i><span id="src-label">Synthetic gait</span></span>
+      <span class="chip" id="chip-rate"><i class="dot"></i><span id="rate-label">— Hz</span></span>
+    </div>
+  </header>
+
+  <div class="main">
+    <div>
+      <div class="stage">
+        <canvas id="scene"></canvas>
+        <div class="badge" id="badge" hidden></div>
+        <div class="stage-overlay">
+          <div class="plane-row">
+            <button class="plane" data-view="sagittal" aria-pressed="false">Sagittal</button>
+            <button class="plane" data-view="frontal" aria-pressed="false">Frontal</button>
+            <button class="plane" data-view="transverse" aria-pressed="false">Transverse</button>
+            <button class="plane" data-view="free" aria-pressed="true">Free</button>
+          </div>
+          <div class="legend">
+            <span><i style="background:var(--ax-x)"></i>X toe</span>
+            <span><i style="background:var(--ax-y)"></i>Y left</span>
+            <span><i style="background:var(--ax-z)"></i>Z up</span>
+            <span id="view-from" style="color:var(--warn)"></span>
+            <span style="color:var(--dim)">drag to orbit &middot; scroll to zoom</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline">
+        <div class="tl-head">
+          <span>Gait cycle &mdash; right foot</span>
+          <span id="tl-phase">phase 0.00</span>
+        </div>
+        <div class="tl-track" id="tl-track">
+          <div class="tl-stance" id="tl-stance"></div>
+          <div class="tl-stance-label" style="left:8px">Stance</div>
+          <div class="tl-flight-label" id="tl-flight-label">Flight</div>
+          <div class="tl-cursor" id="tl-cursor"></div>
+        </div>
+        <div class="tl-events" id="tl-events"></div>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <section class="block">
+        <h2>Pod link</h2>
+        <button class="btn primary" id="btn-connect">Connect pod over Bluetooth</button>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn" id="btn-zero" disabled>Zero / level</button>
+          <button class="btn" id="btn-recal" disabled>Recalibrate</button>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn" id="btn-respos" disabled>Reset position</button>
+          <button class="btn" id="btn-follow" aria-pressed="true">Follow shoe</button>
+        </div>
+        <div id="nav-row" hidden>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn" id="btn-mode-auto" aria-pressed="true">Auto</button>
+            <button class="btn" id="btn-mode-gait" aria-pressed="false">Gait</button>
+            <button class="btn" id="btn-mode-free" aria-pressed="false">In hand</button>
+            <button class="btn" id="btn-level">Level only</button>
+          </div>
+          <p class="note" id="nav-state">ESKF firmware</p>
+        </div>
+        <p class="note" id="ble-note">
+          Advertises as <code>Kinesthesia-Pod</code>. Needs Chrome or Edge. If the device
+          picker never opens, the frame is blocking Web Bluetooth &mdash; open the standalone
+          <code>gait_viewer.html</code> instead.
+        </p>
+      </section>
+
+      <section class="block" id="rec-block" hidden>
+        <h2>Record</h2>
+        <div class="ledlog" id="rec-state" style="margin-bottom:8px">not recording</div>
+        <div class="btn-row">
+          <button class="btn primary" id="btn-rec-phone" aria-pressed="false">Record to this device</button>
+          <button class="btn" id="btn-rec-pod" aria-pressed="false">Record on the pod</button>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn" id="btn-rec-sync">Sync flash</button>
+          <button class="btn" id="btn-rec-mark">Mark</button>
+        </div>
+        <div class="slider" style="margin-top:10px">
+          <label for="s-rec-dur">Pod recording length</label>
+          <output id="o-rec-dur">until stopped</output>
+          <input type="range" id="s-rec-dur" min="0" max="5" step="1" value="0">
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn" id="btn-rec-list">Recordings on the pod</button>
+          <button class="btn" id="btn-rec-erase">Erase the pod's flash</button>
+        </div>
+        <div id="rec-list" style="margin-top:8px"></div>
+        <p class="note">
+          <b>Record to this device</b> streams every raw sensor sample, the mic's
+          level track, the steps and the clocks to this browser and saves a
+          <code>.krec</code> file when you stop &mdash; any length, but the device
+          has to come along (Chrome on Android; the screen stays on while
+          recording). <b>Record on the pod</b> uses its 2 MB flash: about five
+          minutes, no phone needed, download it here afterwards. Every start and
+          stop flashes the ring white in a coded pattern: film it, and
+          <code>kine_label.html</code> lines the video up with the recording.
+          Stomp three times after the flashes, too &mdash; the mic and the
+          video's sound both hear it.
+        </p>
+      </section>
+
+      <section class="block" id="link-block">
+        <h2>Screen link</h2>
+        <button class="btn" id="btn-share" aria-pressed="false" disabled>Share to other screens</button>
+        <p class="note" id="link-note">
+          iPadOS has no Web Bluetooth in any browser, so an iPad cannot talk to the
+          pod &mdash; but it can be a screen. Run <code>kinesthesia_relay.py</code> on
+          this computer, connect the pod here, switch this on, and open the address it
+          prints on the iPad.
+        </p>
+      </section>
+
+      <section class="block" id="led-block">
+        <h2>LED ring</h2>
+        <canvas id="ledring" aria-label="Preview of the 12-LED ring"></canvas>
+        <div class="leds" id="leds"></div>
+        <div class="slider" style="margin-top:12px">
+          <label for="s-led-bright">Brightness</label>
+          <output id="o-led-bright">50</output>
+          <input type="range" id="s-led-bright" min="0" max="150" step="1" value="50">
+        </div>
+        <div class="ledlog" id="led-log">not connected</div>
+        <p class="note">
+          The ring above is a preview of the program you selected, not a readback
+          &mdash; the pod sends pixels to the strip, not to here. Brightness is capped
+          at 150 by the firmware and capped again when the cell gets low: twelve RGBW
+          pixels off the 3V3 pin can outdraw the IMU and the radio together.
+        </p>
+      </section>
+
+      <section class="block">
+        <h2>Fatigue watch</h2>
+        <div class="alertbar" id="fat-alert" hidden>
+          <i></i><b>Drift</b><span id="fat-alert-text"></span>
+        </div>
+        <div class="hero">
+          <span class="num ok" id="drift-num">0</span>
+          <span class="sub"><b id="drift-state">Collecting baseline</b>
+            <span id="drift-driver">needs about 40 steps before it can compare</span></span>
+        </div>
+        <canvas id="drift-chart"></canvas>
+        <div class="chart-cap">
+          <span id="chart-x">step —</span>
+          <span>alert at 45</span>
+        </div>
+        <p class="note">
+          Drift compares the last 16 steps against this runner's own first
+          40 — no population norms, no notion of correct form. It rises when
+          contact time or duty factor climb, when step timing becomes erratic,
+          or when the foot stops being carried as high.
+        </p>
+      </section>
+
+      <section class="block">
+        <h2>Last step</h2>
+        <div class="grid2">
+          <div class="cell"><span class="k">Duty factor</span><span class="v" id="sf-duty">—<span class="u">%</span></span></div>
+          <div class="cell"><span class="k">Stride time CV</span><span class="v" id="sf-var">—<span class="u">%</span></span></div>
+          <div class="cell"><span class="k">Contact angle</span><span class="v" id="sf-angle">—<span class="u">&deg;</span></span></div>
+          <div class="cell"><span class="k">Swing height</span><span class="v" id="sf-swing">—<span class="u">cm</span></span></div>
+          <div class="cell"><span class="k">Frontal excursion</span><span class="v" id="sf-pron">—<span class="u">&deg;</span></span></div>
+          <div class="cell"><span class="k">Peak roll rate</span><span class="v" id="sf-pronrate">—<span class="u">&deg;/s</span></span></div>
+          <div class="cell"><span class="k">Strike level</span><span class="v" id="sf-db">—<span class="u">dBFS</span></span></div>
+          <div class="cell"><span class="k">Mic lead</span><span class="v" id="sf-lead">—<span class="u">ms</span></span></div>
+          <div class="cell" style="grid-column:1/-1"><span class="k">Mic-confirmed</span><span class="v" id="sf-conf">—<span class="u">%</span></span></div>
+        </div>
+        <p class="note">
+          Frontal-plane excursion is measured only while the foot is flat and
+          discarded at toe-off, so it never contaminates the timing features.
+          It is an experimental proxy, not a pronation measurement — nothing
+          fires on it until it has been validated against motion capture.
+        </p>
+        <p class="note" id="mic-note">
+          <b>Strike level</b> is how loud the landing was, from the Sense
+          board&rsquo;s microphone. Landing harder is one of the first things a
+          tiring runner does, and step timing barely shows it. <b>Mic lead</b>
+          is the IMU&rsquo;s contact time minus the strike&rsquo;s click &mdash; a
+          second, independent opinion on when the foot hit. On the ESKF
+          firmware every landing is checked: <b>mic-confirmed</b> is the share
+          the mic heard as this foot&rsquo;s strike (the other foot, half a
+          stride later, is quieter and does not count). A landing it did not
+          hear is left out of the fatigue trend; on a surface it cannot hear
+          (grass, a loud treadmill) it says so and gives no opinion. The pod
+          turns audio into a level and a timestamp as it arrives; no audio is
+          stored, and none is sent.
+        </p>
+      </section>
+
+      <section class="block">
+        <h2>Does this look right?</h2>
+        <div class="checks" id="checks"></div>
+        <p class="note" id="checks-note">
+          These test the live pod against what a foot can physically do. If the
+          shoe on screen looks wrong, start here — the picture is the check, and
+          these say which part of the chain to distrust.
+        </p>
+      </section>
+
+      <section class="block">
+        <h2>Simulation</h2>
+        <div class="ctrl">
+          <div class="slider">
+            <label for="s-cadence">Cadence</label>
+            <output id="o-cadence">172 spm</output>
+            <input type="range" id="s-cadence" min="140" max="200" step="1" value="172">
+          </div>
+          <div class="slider">
+            <label for="s-speed">Playback</label>
+            <output id="o-speed">1.00&times;</output>
+            <input type="range" id="s-speed" min="10" max="100" step="5" value="100">
+          </div>
+          <div class="slider">
+            <label for="s-fatigue">Fatigue</label>
+            <output id="o-fatigue">fresh</output>
+            <input type="range" id="s-fatigue" min="0" max="100" step="1" value="0">
+          </div>
+          <div class="slider">
+            <label for="s-variation">Step-to-step variation</label>
+            <output id="o-variation">medium</output>
+            <input type="range" id="s-variation" min="0" max="100" step="1" value="45">
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="btn-play">Pause</button>
+            <button class="btn" id="btn-reroll">New runner</button>
+          </div>
+          <div class="toggles">
+            <button class="toggle" id="t-axes" aria-pressed="true">Pod axes</button>
+            <button class="toggle" id="t-trail" aria-pressed="true">Pod trail</button>
+            <button class="toggle" id="t-grid" aria-pressed="true">Ground</button>
+            <button class="toggle" id="t-pos" aria-pressed="false">Dead reckoning</button>
+          </div>
+        </div>
+        <p class="note" id="sim-note">
+          Synthetic kinematics, not recorded data: a randomised runner with plausible
+          contact angle, toe-off rate and step-to-step variation. Connect a pod to drive
+          the same shoe from the real quaternion.
+        </p>
+      </section>
+      <section class="block">
+        <h2>Foot segment angles</h2>
+        <div class="angles">
+          <div class="angle">
+            <span class="lab">Dorsi + / plantar &minus;</span>
+            <span class="bar"><span class="zero"></span><span class="fill" id="bar-pitch"></span></span>
+            <span class="num" id="num-pitch">0.0&deg;</span>
+          </div>
+          <div class="angle">
+            <span class="lab">Inv + / eversion &minus;</span>
+            <span class="bar"><span class="zero"></span><span class="fill" id="bar-roll"></span></span>
+            <span class="num" id="num-roll">0.0&deg;</span>
+          </div>
+          <div class="angle">
+            <span class="lab">Int + / ext rot &minus;</span>
+            <span class="bar"><span class="zero"></span><span class="fill" id="bar-yaw"></span></span>
+            <span class="num" id="num-yaw">0.0&deg;</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="block">
+        <h2>Step metrics</h2>
+        <div class="grid2">
+          <div class="cell"><span class="k">Cadence</span><span class="v" id="m-cadence">—<span class="u">spm</span></span></div>
+          <div class="cell"><span class="k">Contact</span><span class="v" id="m-contact">—<span class="u">ms</span></span></div>
+          <div class="cell"><span class="k">Flight</span><span class="v" id="m-flight">—<span class="u">ms</span></span></div>
+          <div class="cell"><span class="k">Toe-off rate</span><span class="v" id="m-toeoff">—<span class="u">&deg;/s</span></span></div>
+          <div class="cell"><span class="k">Contact angle</span><span class="v" id="m-contact-angle">—<span class="u">&deg;</span></span></div>
+          <div class="cell"><span class="k">Peak |a|</span><span class="v" id="m-peaka">—<span class="u">g</span></span></div>
+          <div class="cell"><span class="k">Stride</span><span class="v" id="m-stride">—<span class="u">cm</span></span></div>
+          <div class="cell"><span class="k">Steps</span><span class="v" id="m-steps">—</span></div>
+        </div>
+        <p class="note" id="odom-note" hidden>
+          Position is dead-reckoned on the pod: acceleration is integrated only
+          between foot strikes, and velocity is forced to zero at each stance.
+          Heading has no compass to hold it, so the path curves slowly. Reset it
+          whenever it wanders.
+        </p>
+      </section>
+
+      <section class="block">
+        <h2>Pod signals</h2>
+        <div class="strip-wrap">
+          <div class="strip">
+            <div class="cap"><span>Accel magnitude</span><span id="cap-acc">0.0 g</span></div>
+            <canvas id="strip-acc"></canvas>
+          </div>
+          <div class="strip">
+            <div class="cap"><span>Gyro &mdash; sagittal (Y)</span><span id="cap-gyr">0 &deg;/s</span></div>
+            <canvas id="strip-gyr"></canvas>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+  </div>
+
+  <div class="status-line" id="status">Synthetic runner &mdash; <b id="st-runner">—</b></div>
+</div>
+
+<script>
+"use strict";
+(function(){
+
+/* =====================================================================
+   vector / quaternion helpers
+   ===================================================================== */
+const D2R = Math.PI/180, R2D = 180/Math.PI;
+
+function qMul(a,b){
+  return [
+    a[0]*b[0]-a[1]*b[1]-a[2]*b[2]-a[3]*b[3],
+    a[0]*b[1]+a[1]*b[0]+a[2]*b[3]-a[3]*b[2],
+    a[0]*b[2]-a[1]*b[3]+a[2]*b[0]+a[3]*b[1],
+    a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0]
+  ];
+}
+function qFromAxis(ax,ay,az,ang){
+  const s=Math.sin(ang/2);
+  return [Math.cos(ang/2), ax*s, ay*s, az*s];
+}
+/* Sign convention used everywhere in this page, matching how a clinician
+   reads a foot: pitch + = dorsiflexion (toe up), roll + = inversion,
+   yaw + = internal rotation. In the pod frame (+X toe, +Y left, +Z up) a
+   positive rotation about +Y is toe-DOWN, hence the negation. */
+function qFromEuler(rollDeg,pitchDeg,yawDeg){
+  const qz=qFromAxis(0,0,1,yawDeg*D2R);
+  const qy=qFromAxis(0,1,0,-pitchDeg*D2R);
+  const qx=qFromAxis(1,0,0,rollDeg*D2R);
+  return qMul(qMul(qz,qy),qx);
+}
+function qNorm(q){
+  const n=Math.hypot(q[0],q[1],q[2],q[3])||1;
+  return [q[0]/n,q[1]/n,q[2]/n,q[3]/n];
+}
+function qConj(q){ return [q[0],-q[1],-q[2],-q[3]]; }
+function qRot(q,v){
+  const [w,x,y,z]=q, [vx,vy,vz]=v;
+  const tx=2*(y*vz-z*vy), ty=2*(z*vx-x*vz), tz=2*(x*vy-y*vx);
+  return [vx+w*tx+(y*tz-z*ty), vy+w*ty+(z*tx-x*tz), vz+w*tz+(x*ty-y*tx)];
+}
+function qToEuler(q){
+  const [w,x,y,z]=q;
+  const roll=Math.atan2(2*(w*x+y*z), 1-2*(x*x+y*y))*R2D;
+  let sp=2*(w*y-z*x); sp=Math.max(-1,Math.min(1,sp));
+  const pitch=-Math.asin(sp)*R2D;          // + = dorsiflexion
+  const yaw=Math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))*R2D;
+  return [roll,pitch,yaw];
+}
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const lerp=(a,b,t)=>a+(b-a)*t;
+function smoothstep(t){ t=clamp(t,0,1); return t*t*(3-2*t); }
+
+/* Smooth interpolation through a table of [t,value] control points. */
+function profile(tbl,t){
+  if(t<=tbl[0][0]) return tbl[0][1];
+  const last=tbl[tbl.length-1];
+  if(t>=last[0]) return last[1];
+  for(let i=0;i<tbl.length-1;i++){
+    const a=tbl[i], b=tbl[i+1];
+    if(t>=a[0]&&t<=b[0]){
+      const u=(t-a[0])/(b[0]-a[0]);
+      return lerp(a[1],b[1],smoothstep(u));
+    }
+  }
+  return last[1];
+}
+
+/* =====================================================================
+   geometry — a running shoe, lofted from cross-sections
+   Foot frame: +X toward the toe, +Y to the left, +Z up. Origin at the
+   ankle centre, which is what the shoe actually pivots about.
+   ===================================================================== */
+const SHOE_LEN = 0.288;                 // 288 mm, a men's EU 44
+const ANKLE_X  = -0.055;                // ankle sits behind mid-shoe
+const ANKLE_Z  = 0.085;
+
+const P_HALFW = [[0,.006],[.04,.033],[.13,.045],[.30,.042],[.46,.045],
+                 [.63,.052],[.76,.050],[.88,.042],[.96,.026],[1,.012]];
+const P_SOLEB = [[0,.013],[.07,.002],[.16,0],[.72,0],[.86,.005],[.94,.016],[1,.030]];
+const P_THICK = [[0,.030],[.18,.037],[.45,.030],[.72,.024],[.9,.018],[1,.014]];
+const P_TOP   = [[0,.052],[.06,.092],[.17,.104],[.30,.086],[.45,.076],
+                 [.60,.068],[.75,.055],[.90,.038],[1,.028]];
+
+const MAT = { outsole:[0x1A,0x1E,0x25], midsole:[0xE2,0xDD,0xD2], upper:[0x3B,0x47,0x5C],
+              collar:[0x2A,0x33,0x42], pod:[0xFF,0x8A,0x3D], podTop:[0x2A,0x21,0x18] };
+
+function sectionPoint(t,k,ring){
+  const th = (k/ring)*Math.PI*2;
+  const w  = profile(P_HALFW,t);
+  const zb = profile(P_SOLEB,t);
+  const zs = zb + profile(P_THICK,t);
+  const zt = Math.max(zs+0.004, profile(P_TOP,t));
+  const c=Math.cos(th), s=Math.sin(th);
+  const y = w*Math.sign(c)*Math.pow(Math.abs(c),0.72);
+  let z;
+  if(s>=0) z = zs + (zt-zs)*Math.pow(Math.abs(s),0.78);
+  else     z = zs - (zs-zb)*Math.pow(Math.abs(s),0.30);   // near-flat bottom
+  // x measured from the heel, then shifted so the origin is the ankle pivot
+  return [t*SHOE_LEN - 0.09 - ANKLE_X, y, z - ANKLE_Z];
+}
+
+function buildShoe(){
+  const STA=22, RING=18;
+  const verts=[], tris=[];
+  for(let i=0;i<STA;i++){
+    const t=i/(STA-1);
+    for(let k=0;k<RING;k++){
+      const p=sectionPoint(t,k,RING);
+      verts.push(p[0],p[1],p[2]);
+    }
+  }
+  const idx=(i,k)=>i*RING+((k+RING)%RING);
+  for(let i=0;i<STA-1;i++){
+    for(let k=0;k<RING;k++){
+      const a=idx(i,k), b=idx(i,k+1), c=idx(i+1,k+1), d=idx(i+1,k);
+      tris.push(a,b,c, a,c,d);
+    }
+  }
+  // caps
+  for(const i of [0,STA-1]){
+    let cx=0,cy=0,cz=0;
+    for(let k=0;k<RING;k++){ cx+=verts[idx(i,k)*3]; cy+=verts[idx(i,k)*3+1]; cz+=verts[idx(i,k)*3+2]; }
+    const ci=verts.length/3;
+    verts.push(cx/RING,cy/RING,cz/RING);
+    for(let k=0;k<RING;k++){
+      if(i===0) tris.push(ci, idx(i,k+1), idx(i,k));
+      else      tris.push(ci, idx(i,k), idx(i,k+1));
+    }
+  }
+  return orientOutward({ verts:new Float32Array(verts), tris, colorFn:shoeFaceColor });
+}
+
+/* Make every triangle wind so its normal points away from the mesh centre.
+   The shoe and the pod are both star-shaped about their centroid, so this
+   removes any doubt about winding and lets the renderer cull back faces by
+   the normal rather than by screen-space sign. */
+function orientOutward(mesh){
+  const v=mesh.verts, T=mesh.tris, n=v.length/3;
+  let mx=0,my=0,mz=0;
+  for(let i=0;i<n;i++){ mx+=v[i*3]; my+=v[i*3+1]; mz+=v[i*3+2]; }
+  mx/=n; my/=n; mz/=n;
+  for(let i=0;i<T.length;i+=3){
+    const a=T[i],b=T[i+1],c=T[i+2];
+    const ux=v[b*3]-v[a*3], uy=v[b*3+1]-v[a*3+1], uz=v[b*3+2]-v[a*3+2];
+    const wx=v[c*3]-v[a*3], wy=v[c*3+1]-v[a*3+1], wz=v[c*3+2]-v[a*3+2];
+    const nx=uy*wz-uz*wy, ny=uz*wx-ux*wz, nz=ux*wy-uy*wx;
+    const cx=(v[a*3]+v[b*3]+v[c*3])/3-mx;
+    const cy=(v[a*3+1]+v[b*3+1]+v[c*3+1])/3-my;
+    const cz=(v[a*3+2]+v[b*3+2]+v[c*3+2])/3-mz;
+    if(nx*cx+ny*cy+nz*cz < 0){ T[i+1]=c; T[i+2]=b; }
+  }
+  return mesh;
+}
+
+/* material by height above the sole and position along the shoe */
+function shoeFaceColor(cx,cy,cz){
+  const t=clamp((cx+ANKLE_X+0.09)/SHOE_LEN,0,1);
+  const zb=profile(P_SOLEB,t)-ANKLE_Z;
+  const zs=zb+profile(P_THICK,t);
+  if(cz < zb+0.006) return MAT.outsole;
+  if(cz < zs)       return MAT.midsole;
+  if(t<0.26 && cz > zs+0.03) return MAT.collar;
+  return MAT.upper;
+}
+
+/* the pod: a 26 x 20 x 8 mm box sitting on the instep */
+const POD_T = 0.40;
+function podAnchor(){
+  const t=POD_T;
+  const zt=profile(P_TOP,t)-ANKLE_Z;
+  return [t*SHOE_LEN-0.09-ANKLE_X, 0, zt];
+}
+function buildPod(){
+  const a=podAnchor();
+  const hx=0.013, hy=0.010, hz=0.004;
+  const c=[];
+  for(const sx of [-1,1]) for(const sy of [-1,1]) for(const sz of [-1,1])
+    c.push([a[0]+sx*hx, a[1]+sy*hy, a[2]+sz*hz+hz]);
+  // index order: (sx,sy,sz) -> 4*ix+2*iy+iz
+  const V=[];
+  c.forEach(p=>V.push(p[0],p[1],p[2]));
+  const q=(a1,b1,c1,d1)=>[a1,b1,c1, a1,c1,d1];
+  const tris=[].concat(
+    q(1,3,7,5),  // +z top
+    q(0,4,6,2),  // -z bottom
+    q(4,5,7,6),  // +x
+    q(0,2,3,1),  // -x
+    q(2,6,7,3),  // +y
+    q(0,1,5,4)   // -y
+  );
+  return orientOutward({ verts:new Float32Array(V), tris,
+           colorFn:(cx,cy,cz)=> cz > a[2]+hz+0.0035 ? MAT.podTop : MAT.pod });
+}
+
+/* =====================================================================
+   renderer — flat-shaded painter's algorithm on a 2D canvas.
+   No libraries, so it also runs from a file:// page at the bench.
+   ===================================================================== */
+const canvas=document.getElementById("scene");
+const ctx=canvas.getContext("2d");
+let W=0,H=0,DPR=1;
+
+const cam={az:-0.72, el:0.30, dist:0.95, target:[0,0,0.10], fov:38};
+
+/* iOS caps how many pixels a canvas may hold - on iPads the practical ceiling
+   is a few million - and a canvas over the limit does not error, it just
+   comes back blank. A full-width stage at devicePixelRatio 2 crosses it
+   easily, which is the most likely reason the 3D view is empty on an iPad
+   while every readout beside it keeps updating. So the backing store is
+   capped by AREA and the pixel ratio is reduced to fit, rather than trusting
+   devicePixelRatio. */
+const MAX_CANVAS_PX = 3.5e6;
+
+function resize(){
+  const r=canvas.parentElement.getBoundingClientRect();
+  /* a parent that has not been laid out yet reports 0 - fall back to the
+     window rather than to a hardcoded size wider than the screen */
+  const pw = r.width  > 4 ? r.width  : (window.innerWidth  || 320);
+  const ph = r.height > 4 ? r.height : Math.max(260, (window.innerHeight||480)*0.5);
+  W=Math.max(240,Math.floor(pw));
+  H=Math.max(240,Math.floor(ph));
+
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  const area=W*H*DPR*DPR;
+  if(area>MAX_CANVAS_PX) DPR=Math.max(1,DPR*Math.sqrt(MAX_CANVAS_PX/area));
+
+  canvas.width=Math.round(W*DPR); canvas.height=Math.round(H*DPR);
+  canvas.style.width=W+"px"; canvas.style.height=H+"px";
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+
+function viewMatrix(){
+  const ce=Math.cos(cam.el), se=Math.sin(cam.el);
+  const ca=Math.cos(cam.az), sa=Math.sin(cam.az);
+  const eye=[cam.target[0]+cam.dist*ce*ca,
+             cam.target[1]+cam.dist*ce*sa,
+             cam.target[2]+cam.dist*se];
+  let f=[cam.target[0]-eye[0],cam.target[1]-eye[1],cam.target[2]-eye[2]];
+  const fl=Math.hypot(f[0],f[1],f[2]); f=[f[0]/fl,f[1]/fl,f[2]/fl];
+  const up=[0,0,1];
+  let s=[f[1]*up[2]-f[2]*up[1], f[2]*up[0]-f[0]*up[2], f[0]*up[1]-f[1]*up[0]];
+  const sl=Math.hypot(s[0],s[1],s[2]); s=[s[0]/sl,s[1]/sl,s[2]/sl];
+  const u=[s[1]*f[2]-s[2]*f[1], s[2]*f[0]-s[0]*f[2], s[0]*f[1]-s[1]*f[0]];
+  return {eye,s,u,f};
+}
+
+let VM=viewMatrix();
+function toView(p){
+  const dx=p[0]-VM.eye[0], dy=p[1]-VM.eye[1], dz=p[2]-VM.eye[2];
+  return [dx*VM.s[0]+dy*VM.s[1]+dz*VM.s[2],
+          dx*VM.u[0]+dy*VM.u[1]+dz*VM.u[2],
+          dx*VM.f[0]+dy*VM.f[1]+dz*VM.f[2]];
+}
+function project(v){
+  const fpx = (H*0.5)/Math.tan(cam.fov*D2R/2);
+  if(v[2]<0.02) return null;
+  return [W/2 + v[0]*fpx/v[2], H/2 - v[1]*fpx/v[2]];
+}
+
+const LIGHT=(()=>{ const l=[-0.35,-0.55,0.86]; const n=Math.hypot(l[0],l[1],l[2]);
+                   return [l[0]/n,l[1]/n,l[2]/n]; })();
+const FILL =(()=>{ const l=[0.6,0.5,-0.35]; const n=Math.hypot(l[0],l[1],l[2]);
+                   return [l[0]/n,l[1]/n,l[2]/n]; })();
+
+function shade(base,n){
+  const kd=Math.max(0,n[0]*LIGHT[0]+n[1]*LIGHT[1]+n[2]*LIGHT[2]);
+  const kf=Math.max(0,n[0]*FILL[0]+n[1]*FILL[1]+n[2]*FILL[2]);
+  const l=0.30 + 0.78*kd + 0.16*kf;
+  const r=clamp(base[0]*l,0,255)|0, g=clamp(base[1]*l,0,255)|0, b=clamp(base[2]*l,0,255)|0;
+  return "rgb("+r+","+g+","+b+")";
+}
+
+const shoeMesh=buildShoe();
+const podMesh=buildPod();
+
+function drawMesh(mesh,q,pos,bucket){
+  const v=mesh.verts, n=v.length/3;
+  const wx=new Float32Array(n), wy=new Float32Array(n), wz=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    const r=qRot(q,[v[i*3],v[i*3+1],v[i*3+2]]);
+    wx[i]=r[0]+pos[0]; wy[i]=r[1]+pos[1]; wz[i]=r[2]+pos[2];
+  }
+  const T=mesh.tris;
+  for(let i=0;i<T.length;i+=3){
+    const a=T[i],b=T[i+1],c=T[i+2];
+    const ux=wx[b]-wx[a], uy=wy[b]-wy[a], uz=wz[b]-wz[a];
+    const vx=wx[c]-wx[a], vy=wy[c]-wy[a], vz=wz[c]-wz[a];
+    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+    const nl=Math.hypot(nx,ny,nz)||1; nx/=nl; ny/=nl; nz/=nl;
+
+    const cx=(wx[a]+wx[b]+wx[c])/3, cy=(wy[a]+wy[b]+wy[c])/3, cz=(wz[a]+wz[b]+wz[c])/3;
+    // back-face cull: normal pointing away from the eye
+    if(nx*(cx-VM.eye[0])+ny*(cy-VM.eye[1])+nz*(cz-VM.eye[2]) >= 0) continue;
+
+    const A=toView([wx[a],wy[a],wz[a]]);
+    const B=toView([wx[b],wy[b],wz[b]]);
+    const C=toView([wx[c],wy[c],wz[c]]);
+    if(A[2]<0.02||B[2]<0.02||C[2]<0.02) continue;
+    const pa=project(A), pb=project(B), pc=project(C);
+    if(!pa||!pb||!pc) continue;
+
+    // model-space centroid decides the material band
+    const mcx=(v[a*3]+v[b*3]+v[c*3])/3;
+    const mcy=(v[a*3+1]+v[b*3+1]+v[c*3+1])/3;
+    const mcz=(v[a*3+2]+v[b*3+2]+v[c*3+2])/3;
+    bucket.push({d:(A[2]+B[2]+C[2])/3, p:[pa,pb,pc],
+                 col:shade(mesh.colorFn(mcx,mcy,mcz),[nx,ny,nz])});
+  }
+}
+
+function drawGround(){
+  if(!opts.grid) return;
+  ctx.lineWidth=1;
+  const N=9, step=0.10;
+  const gx=Math.round(cam.target[0]/step)*step;
+  const gy=Math.round(cam.target[1]/step)*step;
+  for(let i=-N;i<=N;i++){
+    for(const axis of [0,1]){
+      const a=axis? [gx-N*step, gy+i*step, 0] : [gx+i*step, gy-N*step, 0];
+      const b=axis? [gx+N*step, gy+i*step, 0] : [gx+i*step, gy+N*step, 0];
+      const va=toView(a), vb=toView(b);
+      if(va[2]<0.02||vb[2]<0.02) continue;
+      const pa=project(va), pb=project(vb);
+      if(!pa||!pb) continue;
+      ctx.strokeStyle = (i===0) ? "rgba(96,112,134,.45)" : "rgba(58,70,86,.32)";
+      ctx.beginPath(); ctx.moveTo(pa[0],pa[1]); ctx.lineTo(pb[0],pb[1]); ctx.stroke();
+    }
+  }
+}
+
+function drawShadow(q,pos){
+  // sole outline flattened to z=0, faded by ride height
+  const h=clamp(pos[2],0,0.30);
+  const alpha=0.34*(1-h/0.30);
+  if(alpha<=0.01) return;
+  const pts=[];
+  for(let k=0;k<24;k++){
+    const t=k/23;
+    const p=sectionPoint(t,Math.floor(18*0.75),18); // one bottom-edge point
+    const r=qRot(q,[p[0],0,p[2]]);
+    pts.push([r[0]+pos[0], r[1]+pos[1]]);
+  }
+  const w=0.052;
+  ctx.beginPath();
+  let started=false;
+  for(let s=0;s<2;s++){
+    const seq = s? pts.slice().reverse() : pts;
+    for(const p of seq){
+      const off = s? -w:w;
+      const v=toView([p[0],p[1]+off,0]);
+      if(v[2]<0.02) continue;
+      const sp=project(v); if(!sp) continue;
+      if(!started){ctx.moveTo(sp[0],sp[1]);started=true;} else ctx.lineTo(sp[0],sp[1]);
+    }
+  }
+  ctx.closePath();
+  ctx.fillStyle="rgba(6,8,11,"+alpha.toFixed(3)+")";
+  ctx.fill();
+}
+
+function drawAxes(q,pos){
+  if(!opts.axes) return;
+  const a=podAnchor();
+  const origin=[a[0],a[1],a[2]+0.012];
+  const L=0.075;
+  const defs=[[[L,0,0],"#FF5A5F","X"],[[0,L,0],"#54DE93","Y"],[[0,0,L],"#4EA8FF","Z"]];
+  const ow=qRot(q,origin); const O=[ow[0]+pos[0],ow[1]+pos[1],ow[2]+pos[2]];
+  const vo=toView(O); if(vo[2]<0.02) return;
+  const po=project(vo); if(!po) return;
+  ctx.lineWidth=2;
+  ctx.font="600 10px "+"'IBM Plex Mono',monospace";
+  for(const [dir,col,lab] of defs){
+    const dw=qRot(q,[origin[0]+dir[0],origin[1]+dir[1],origin[2]+dir[2]]);
+    const P=[dw[0]+pos[0],dw[1]+pos[1],dw[2]+pos[2]];
+    const vp=toView(P); if(vp[2]<0.02) continue;
+    const pp=project(vp); if(!pp) continue;
+    ctx.strokeStyle=col;
+    ctx.beginPath(); ctx.moveTo(po[0],po[1]); ctx.lineTo(pp[0],pp[1]); ctx.stroke();
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.arc(pp[0],pp[1],2.6,0,Math.PI*2); ctx.fill();
+    ctx.fillText(lab, pp[0]+5, pp[1]-4);
+  }
+}
+
+const trail=[];
+function drawTrail(){
+  if(!opts.trail||trail.length<2) return;
+  ctx.lineWidth=1.2;
+  for(let i=1;i<trail.length;i++){
+    const va=toView(trail[i-1]), vb=toView(trail[i]);
+    if(va[2]<0.02||vb[2]<0.02) continue;
+    const pa=project(va), pb=project(vb);
+    if(!pa||!pb) continue;
+    let alpha=0.04+0.34*(i/trail.length);
+    let col="255,138,61";
+    if(live&&hasOdom&&odom.untracked){ col="255,90,95"; alpha*=0.45; }
+    else if(live&&hasOdom&&odom.coasting){ col="255,194,78"; alpha*=0.7; }
+    ctx.strokeStyle="rgba("+col+","+alpha.toFixed(3)+")";
+    ctx.beginPath(); ctx.moveTo(pa[0],pa[1]); ctx.lineTo(pb[0],pb[1]); ctx.stroke();
+  }
+}
+
+function render(q,pos){
+  VM=viewMatrix();
+  ctx.clearRect(0,0,W,H);
+  drawGround();
+  drawShadow(q,pos);
+  const bucket=[];
+  drawMesh(shoeMesh,q,pos,bucket);
+  drawMesh(podMesh,q,pos,bucket);
+  bucket.sort((a,b)=>b.d-a.d);
+  for(const f of bucket){
+    ctx.fillStyle=f.col;
+    ctx.beginPath();
+    ctx.moveTo(f.p[0][0],f.p[0][1]);
+    ctx.lineTo(f.p[1][0],f.p[1][1]);
+    ctx.lineTo(f.p[2][0],f.p[2][1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+  drawTrail();
+  drawAxes(q,pos);
+}
+
+/* =====================================================================
+   synthetic gait
+   One cycle = one stride of the right foot. Angles follow the shape of a
+   rearfoot-strike running cycle: dorsiflexed at contact, flat through
+   midstance, hard plantarflexion at toe-off, recovery through swing.
+   ===================================================================== */
+function rand(a,b){ return a+Math.random()*(b-a); }
+
+const runner={
+  cadence:172, duty:0.36, strike:12, toeOff:36, swingDorsi:14,
+  evAtContact:-6, evMid:2, rotSwing:5, riseHeight:0.20, variation:0.45,
+  label:""
+};
+let step={};
+
+function newRunner(){
+  runner.duty      = rand(0.31,0.40);
+  runner.strike    = rand(2,22);
+  runner.toeOff    = rand(26,44);
+  runner.swingDorsi= rand(8,20);
+  runner.evAtContact= rand(-12,4);
+  runner.evMid     = rand(-3,5);
+  runner.rotSwing  = rand(2,9);
+  runner.riseHeight= rand(0.14,0.28);
+  const strikeType = runner.strike>13 ? "rearfoot" : (runner.strike>6 ? "midfoot" : "forefoot");
+  runner.label = strikeType+" strike, "+runner.cadence+" spm, "+
+                 runner.toeOff.toFixed(0)+"° toe-off";
+  document.getElementById("st-runner").textContent=runner.label;
+  newStep();
+}
+/* A mirror of gait.h's scoring, for the synthetic runner only, so the fatigue
+   feature can be demonstrated with no hardware. Live mode always uses the
+   pod's own number — this never runs when a pod is connected. */
+const simGait={
+  cHist:[], sHist:[], hHist:[], dHist:[], steps:0,
+  baseC:0, baseD:0, baseV:0, baseH:0, baseDb:0, ready:false, audio:false,
+  bc:0, bd:0, bv:0, bh:0, bq:0, bN:0, bqN:0, ema:0, above:0,
+  reset(){ this.cHist=[];this.sHist=[];this.hHist=[];this.dHist=[];this.steps=0;
+           this.ready=false;this.audio=false;
+           this.bc=this.bd=this.bv=this.bh=this.bq=this.bN=this.bqN=0;
+           this.ema=0;this.above=0; },
+  mean(a){ return a.reduce((x,y)=>x+y,0)/a.length; },
+  cv(){ if(this.sHist.length<4) return 0;
+        const m=this.mean(this.sHist);
+        const v=this.mean(this.sHist.map(x=>(x-m)*(x-m)));
+        return 1000*Math.sqrt(v)/m; },
+  push(contact,flight,swingMm,db){
+    const period=contact+flight;
+    if(contact<80||contact>900||period<200||period>2000) return;
+    this.steps++;
+    this.cHist.push(contact); this.sHist.push(period); this.hHist.push(swingMm);
+    /* only landings the mic actually heard enter the level window: a gap is
+       not a quiet strike */
+    if(db!=null){ this.dHist.push(db); if(this.dHist.length>16) this.dHist.shift(); }
+    if(this.cHist.length>16){this.cHist.shift();this.sHist.shift();this.hHist.shift();}
+    const varT=this.cv();
+    const dutyF=100*contact/period;
+    if(!this.ready && this.steps>=8){
+      this.bc+=contact; this.bd+=dutyF; this.bv+=varT; this.bh+=swingMm; this.bN++;
+      if(db!=null){ this.bq+=db; this.bqN++; }
+      if(this.steps>=40 && this.bN>8){
+        this.baseC=this.bc/this.bN; this.baseD=this.bd/this.bN;
+        this.baseV=this.bv/this.bN; this.baseH=this.bh/this.bN;
+        this.baseDb=this.bqN?this.bq/this.bqN:0; this.audio=this.bqN>8;
+        this.ready=true;
+      }
+    }
+    let drift=0, driver=0;
+    if(this.ready){
+      const c=this.mean(this.cHist), st=this.mean(this.sHist), h=this.mean(this.hHist);
+      const d=100*c/st;
+      const q=this.dHist.length?this.mean(this.dHist):this.baseDb;
+      const t=[ Math.max(0,((c-this.baseC)/this.baseC)/0.05),
+                Math.max(0,((d-this.baseD)/this.baseD)/0.04),
+                Math.max(0,(varT-this.baseV)/10),
+                Math.max(0,((this.baseH-h)/this.baseH)/0.10),
+                this.audio ? Math.max(0,(q-this.baseDb)/3) : 0 ];
+      let worst=0,wi=0;
+      t.forEach((x,i)=>{ if(x>worst){worst=x;wi=i;} });
+      const raw=Math.min(100,worst*100);
+      this.ema+=(raw-this.ema)*0.12;
+      drift=Math.round(this.ema); driver=drift>5?wi+1:0;
+      if(drift>=45){ this.above=Math.min(255,this.above+1); }
+      else if(this.above>0) this.above--;
+    }
+    Object.assign(sf,{n:this.steps, duty:Math.round(dutyF), varTenths:Math.round(varT),
+      swing:swingMm, drift, driver, baseline:this.ready, alert:this.above>=12});
+    pushStep(contact,flight);
+  }
+};
+
+function newStep(){
+  const v=runner.variation;
+  step={
+    strike : runner.strike    + rand(-4,4)*v,
+    toeOff : runner.toeOff    + rand(-5,5)*v,
+    ev     : runner.evAtContact+ rand(-4,4)*v,
+    rot    : runner.rotSwing  + rand(-3,3)*v,
+    rise   : runner.riseHeight*(1+rand(-0.18,0.18)*v),
+    dutyJit: 1+rand(-0.05,0.05)*v
+  };
+}
+
+/* pose at cycle phase p in [0,1) */
+function gaitPose(p){
+  const duty=clamp(runner.duty*step.dutyJit,0.25,0.45);
+  let pitch,roll,yaw,z,x;
+
+  if(p<duty){                       // ---- stance ----
+    const s=p/duty;                 // 0 at contact, 1 at toe-off
+    if(s<0.16){                     // contact -> foot flat
+      pitch = lerp(step.strike, 0, smoothstep(s/0.16));
+      z = lerp(0.012,0,smoothstep(s/0.16));
+    } else if(s<0.58){              // midstance
+      pitch = lerp(0,-4,smoothstep((s-0.16)/0.42));
+      z = 0;
+    } else {                        // heel off -> toe off
+      const u=smoothstep((s-0.58)/0.42);
+      pitch = lerp(-4,-step.toeOff,u);
+      z = 0.004+0.055*u*u;
+    }
+    roll = lerp(step.ev, runner.evMid, smoothstep(clamp(s/0.35,0,1)));
+    yaw  = lerp(-step.rot*0.4, step.rot*0.25, s);
+    x    = lerp(0.12,-0.12,s);      // treadmill framing: ground slides back
+  } else {                          // ---- swing ----
+    const s=(p-duty)/(1-duty);
+    const u=smoothstep(s);
+    // pitch recovers from plantarflexion, overshoots into dorsiflexion,
+    // then sets the strike angle for the next contact
+    if(s<0.45) pitch = lerp(-step.toeOff, runner.swingDorsi, smoothstep(s/0.45));
+    else       pitch = lerp(runner.swingDorsi, step.strike, smoothstep((s-0.45)/0.55));
+    roll = lerp(runner.evMid, step.ev, u*u);
+    yaw  = step.rot*Math.sin(Math.PI*s)*0.9;
+    z    = step.rise*Math.sin(Math.PI*Math.pow(s,0.85));
+    x    = lerp(-0.12,0.12,u);
+  }
+  return { q:qNorm(qFromEuler(roll,pitch,yaw)), pos:[x,0,z+0.002], pitch, roll, yaw,
+           stance:p<duty, duty };
+}
+
+/* =====================================================================
+   state, signals and UI
+   ===================================================================== */
+const opts={axes:true,trail:true,grid:true};
+let playing=true, speed=1.0, phase=0, lastT=0;
+let live=false;                        // driven by a connected pod
+let fatigue=0;                         // synthetic only: 0 fresh .. 1 spent
+let fps=0, fpsN=0, fpsT=0, checkTick=0;
+let liveQ=[1,0,0,0], liveAcc=[0,0,1], liveGyr=[0,0,0], livePkts=0, liveRate=0;
+let hasOdom=false, hasStep=false, hasMic=false, follow=true;
+/* Dead reckoning is OFF by default, and this is a deliberate choice rather
+   than a missing feature. The pod's accelerometer has never been calibrated,
+   and the datasheet zero-g offset of 40 mg becomes about 5 cm of invented
+   travel per half-second of handling - in the same direction every time, so
+   it accumulates. Until that calibration exists, a position drawn from it is
+   a number the viewer cannot stand behind. Orientation does not have that
+   problem: it is corrected against gravity every time the pod is still.
+   With this off the viewer behaves like the very first build - the shoe
+   rotates in place and nothing can drift, because nothing is integrated. */
+let usePos=false;
+const acoustic={db:-128, lead:-128, onsets:0, noise:-128, base:-128,
+                drops:0, running:false, clipped:false, ready:false, primed:false,
+                verdict:0, conf:0, unconf:0, deaf:0, unchecked:0};
+/* the pod's verdict on a landing (stride byte 15, acoustic byte 7) */
+const MIC_OK=0x10, MIC_NO=0x20, MIC_DEAF=0x40;
+/* one entry per completed step: what the pod sends, or what the synthetic
+   runner produced. The chart and the last-step panel both read from here. */
+const stepLog=[];
+const sf={duty:0,varTenths:0,angle10:0,swing:0,pron10:0,pronRate:0,
+          drift:0,driver:0,baseline:false,alert:false,n:0};
+const DRIVER=["","contact time rising","duty factor rising",
+              "step timing becoming erratic","foot carried lower",
+              "landing audibly harder"];
+const odom={p:[0,0,0], v:[0,0,0], stance:true, coasting:false, untracked:false,
+            sinceStance:0, steps:0, contact:0, flight:0, stride:0};
+
+let prevQ=null, prevPos=null, prevVel=[0,0,0];
+let accMag=1, gyrY=0, peakA=1, peakToeOff=0, lastStrike=0;
+let contactMs=0, flightMs=0, stanceStart=0, cycleMs=0;
+
+const accHist=new Float32Array(240), gyrHist=new Float32Array(240);
+let histI=0;
+
+const el=id=>document.getElementById(id);
+
+/* ---- rolling strips ---- */
+function drawStrip(cv,data,color,center,scale,unitFmt){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const w=cv.clientWidth||300, h=68;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){ cv.width=w*dpr; cv.height=h*dpr; }
+  const c=cv.getContext("2d");
+  c.setTransform(dpr,0,0,dpr,0,0);
+  c.clearRect(0,0,w,h);
+  // baseline
+  c.strokeStyle="rgba(90,104,124,.35)"; c.lineWidth=1;
+  const y0=h/2-(center*scale);
+  c.beginPath(); c.moveTo(0,y0); c.lineTo(w,y0); c.stroke();
+  c.strokeStyle=color; c.lineWidth=1.6;
+  c.beginPath();
+  const n=data.length;
+  for(let i=0;i<n;i++){
+    const v=data[(histI+i)%n];
+    const x=(i/(n-1))*w;
+    const y=clamp(h/2-(v-center)*scale, 1, h-1);
+    if(i===0) c.moveTo(x,y); else c.lineTo(x,y);
+  }
+  c.stroke();
+}
+
+/* ---- fatigue chart -------------------------------------------------
+   One series: drift over the steps of this run. The baseline window is
+   shaded because a number inside it means nothing yet, and the alert level
+   is drawn as a labelled rule so the line can be read against it without a
+   legend. Status colour appears only on the endpoint, next to the hero
+   number that names the state in words. */
+const CHART_SPAN=240;                  // steps visible at once
+let hoverIdx=-1;
+
+const stepDataValid = () => !live || hasStep || navFw;   /* synthetic, or a real stream */
+
+function chartSlice(){
+  if(!stepDataValid()) return [];
+  const n=stepLog.length;
+  return stepLog.slice(Math.max(0,n-CHART_SPAN));
+}
+
+function driftTone(d,alert){ return alert||d>=45 ? "bad" : (d>=25 ? "warn" : "ok"); }
+const TONE={ok:"#54DE93",warn:"#FFC24E",bad:"#FF5A5F"};
+
+function drawDriftChart(){
+  const cv=el("drift-chart");
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const w=cv.clientWidth||300, h=132;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){
+    cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+  }
+  const c=cv.getContext("2d");
+  c.setTransform(dpr,0,0,dpr,0,0);
+  c.clearRect(0,0,w,h);
+
+  const PAD_L=30, PAD_R=10, PAD_T=10, PAD_B=16;
+  const pw=Math.max(10,w-PAD_L-PAD_R), ph=h-PAD_T-PAD_B;
+  const yOf=v=>PAD_T+ph*(1-clamp(v,0,100)/100);
+
+  /* recessive frame: 0 / 50 / 100 only */
+  c.font='10px "IBM Plex Mono",monospace';
+  c.textBaseline="middle"; c.textAlign="right";
+  for(const v of [0,50,100]){
+    const y=yOf(v);
+    c.strokeStyle="rgba(95,107,124,.20)"; c.lineWidth=1;
+    c.beginPath(); c.moveTo(PAD_L,Math.round(y)+0.5); c.lineTo(w-PAD_R,Math.round(y)+0.5); c.stroke();
+    c.fillStyle="#5F6B7C"; c.fillText(String(v),PAD_L-6,y);
+  }
+
+  const pts=chartSlice();
+  if(pts.length<2){
+    c.textAlign="center"; c.fillStyle="#5F6B7C";
+    c.fillText(live&&!hasStep ? "this firmware sends no step packets"
+                              : "waiting for steps", PAD_L+pw/2, PAD_T+ph/2);
+    el("chart-x").textContent="step —";
+    return;
+  }
+
+  const xOf=i=>PAD_L+(pts.length<2?0:pw*i/(pts.length-1));
+
+  /* the baseline window: drift is not computed here, so say so rather than
+     drawing a flat zero that looks like a healthy runner */
+  let lastBase=-1;
+  for(let i=0;i<pts.length;i++) if(!pts[i].base) lastBase=i;
+  if(lastBase>=0){
+    const x1=xOf(lastBase);
+    c.fillStyle="rgba(95,107,124,.10)";
+    c.fillRect(PAD_L,PAD_T,Math.max(0,x1-PAD_L),ph);
+    if(x1-PAD_L>52){
+      c.textAlign="left"; c.fillStyle="#5F6B7C";
+      c.fillText("baseline",PAD_L+6,PAD_T+9);
+    }
+  }
+
+  /* alert level */
+  const ya=Math.round(yOf(45))+0.5;
+  c.save();
+  c.setLineDash([3,3]); c.strokeStyle="rgba(255,90,95,.55)"; c.lineWidth=1;
+  c.beginPath(); c.moveTo(PAD_L,ya); c.lineTo(w-PAD_R,ya); c.stroke();
+  c.restore();
+
+  /* The series. Inside the baseline window the score is not a measurement
+     yet - it is a flat zero because nothing has been compared - so that
+     stretch is drawn dim and dashed rather than as a confident healthy line. */
+  c.lineJoin="round"; c.lineCap="round";
+  if(lastBase>0){
+    c.save();
+    c.setLineDash([2,3]);
+    c.strokeStyle="rgba(95,107,124,.75)"; c.lineWidth=1.5;
+    c.beginPath();
+    for(let i=0;i<=lastBase;i++){
+      const x=xOf(i), y=yOf(pts[i].drift);
+      if(i===0) c.moveTo(x,y); else c.lineTo(x,y);
+    }
+    c.stroke();
+    c.restore();
+  }
+  c.strokeStyle="#FF8A3D"; c.lineWidth=2;
+  c.beginPath();
+  for(let i=Math.max(0,lastBase);i<pts.length;i++){
+    const x=xOf(i), y=yOf(pts[i].drift);
+    if(i===Math.max(0,lastBase)) c.moveTo(x,y); else c.lineTo(x,y);
+  }
+  c.stroke();
+
+  /* emphasised endpoint, in the status colour, with a surface ring */
+  const lastP=pts[pts.length-1];
+  const ex=xOf(pts.length-1), ey=yOf(lastP.drift);
+  c.fillStyle="#1C222B";
+  c.beginPath(); c.arc(ex,ey,6,0,Math.PI*2); c.fill();
+  c.fillStyle=TONE[driftTone(lastP.drift,lastP.alert)];
+  c.beginPath(); c.arc(ex,ey,4.5,0,Math.PI*2); c.fill();
+
+  /* hover crosshair */
+  let read=pts[pts.length-1], readIdx=pts.length-1;
+  if(hoverIdx>=0 && hoverIdx<pts.length){
+    readIdx=hoverIdx; read=pts[hoverIdx];
+    const hx=Math.round(xOf(hoverIdx))+0.5;
+    c.strokeStyle="rgba(230,234,241,.28)"; c.lineWidth=1;
+    c.beginPath(); c.moveTo(hx,PAD_T); c.lineTo(hx,PAD_T+ph); c.stroke();
+    c.fillStyle="#E6EAF1";
+    c.beginPath(); c.arc(xOf(hoverIdx),yOf(read.drift),3.5,0,Math.PI*2); c.fill();
+  }
+  void readIdx;
+  el("chart-x").textContent =
+    "step "+read.n+" · drift "+read.drift+
+    (read.base ? "" : " · baseline");
+}
+
+el("drift-chart").addEventListener("pointermove",e=>{
+  const cv=el("drift-chart"), r=cv.getBoundingClientRect();
+  const pts=chartSlice();
+  if(pts.length<2){ hoverIdx=-1; return; }
+  const PAD_L=30, PAD_R=10;
+  const pw=Math.max(10,r.width-PAD_L-PAD_R);
+  const u=(e.clientX-r.left-PAD_L)/pw;
+  hoverIdx=Math.round(clamp(u,0,1)*(pts.length-1));
+});
+el("drift-chart").addEventListener("pointerleave",()=>{ hoverIdx=-1; });
+
+/* ---- fatigue + last-step readouts ---- */
+function updateGaitPanels(){
+  const num=el("drift-num");
+  const show = stepDataValid() && sf.baseline;
+  const tone = show ? driftTone(sf.drift,sf.alert) : "";
+  num.className="num "+(tone||"");
+  num.textContent = show ? sf.drift : "—";
+
+  if(live && !hasStep && !navFw){
+    el("drift-state").textContent="No step stream";
+    el("drift-driver").textContent="this firmware sends orientation and odometry only "+
+      "\u2014 nothing on this panel applies to it";
+  }else if(!sf.baseline){
+    el("drift-state").textContent="Collecting baseline";
+    el("drift-driver").textContent = sf.n
+      ? sf.n+" of 40 steps — the comparison starts once this run has settled"
+      : "needs about 40 steps before it can compare";
+  }else if(sf.alert){
+    el("drift-state").textContent="Sustained drift";
+    el("drift-driver").textContent = (DRIVER[sf.driver]||"pattern changed")+
+      " — held for a dozen steps, not one";
+  }else if(sf.drift>=25){
+    el("drift-state").textContent="Drifting";
+    el("drift-driver").textContent = (DRIVER[sf.driver]||"pattern changed")+
+      " — watching, not alerting yet";
+  }else{
+    el("drift-state").textContent="Holding steady";
+    el("drift-driver").textContent="close to how this run started";
+  }
+
+  const dash='—';
+  const have = stepDataValid() && sf.n;
+  if(!have){
+    for(const [id,u] of [["sf-duty","%"],["sf-var","%"],["sf-angle","&deg;"],
+                         ["sf-swing","cm"],["sf-pron","&deg;"],["sf-pronrate","&deg;/s"],
+                         ["sf-db","dBFS"],["sf-lead","ms"]])
+      el(id).innerHTML = dash+'<span class="u">'+u+'</span>';
+    el("fat-alert").hidden = true;
+    return;
+  }
+  el("sf-duty").innerHTML     = (sf.n?sf.duty:dash)+'<span class="u">%</span>';
+  el("sf-var").innerHTML      = (sf.n?(sf.varTenths/10).toFixed(1):dash)+'<span class="u">%</span>';
+  el("sf-angle").innerHTML    = (sf.n?(sf.angle10/10).toFixed(1):dash)+'<span class="u">&deg;</span>';
+  el("sf-swing").innerHTML    = (sf.n?(sf.swing/10).toFixed(1):dash)+'<span class="u">cm</span>';
+  el("sf-pron").innerHTML     = (sf.n?(sf.pron10/10).toFixed(1):dash)+'<span class="u">&deg;</span>';
+  el("sf-pronrate").innerHTML = (sf.n?sf.pronRate:dash)+'<span class="u">&deg;/s</span>';
+  if(live && navFw && !hasStep)        /* strides carry timing and clearance, not these */
+    for(const [id,u] of [["sf-angle","&deg;"],["sf-pron","&deg;"],["sf-pronrate","&deg;/s"]])
+      el(id).innerHTML = dash+'<span class="u">'+u+'</span>';
+  const haveDb = acoustic.db>-128;
+  el("sf-db").innerHTML   = (haveDb?acoustic.db:dash)+'<span class="u">dBFS</span>';
+  el("sf-lead").innerHTML = (acoustic.lead>-128?acoustic.lead:dash)+'<span class="u">ms</span>';
+  const heardN=acoustic.conf+acoustic.unconf;
+  el("sf-conf").innerHTML = (heardN?Math.round(100*acoustic.conf/heardN):dash)+'<span class="u">%</span>';
+
+  const b=el("fat-alert");
+  b.hidden=!sf.alert;
+  if(sf.alert)
+    el("fat-alert-text").textContent =
+      "this run has moved away from how it started — "+
+      (DRIVER[sf.driver]||"pattern changed")+". Worth easing off or stopping.";
+}
+
+/* ---- BLE ---- */
+const SVC="f5a30001-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_MOTION="f5a30002-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_STATUS="f5a30003-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_CMD="f5a30004-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_ODOM="f5a30005-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_STEP="f5a30006-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_ACOUSTIC="f5a30007-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+/* xiao_sense_eskf: per-stride report and live displacement. Their presence
+   is how the viewer knows it is talking to the ESKF firmware. */
+const CHR_STRIDE="f5a30008-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_LIVE="f5a30009-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_REC ="f5a3000a-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+let navFw=false, podModeSel="AUTO", podFree=true, podInit=false, podStanceS=false;
+const odomWrap={off:[0,0,0], prev:null};
+let lastStride=null;
+let cmdChar=null, bleDevice=null;
+/* The pod carries Nordic UART beside its own service, running the LED ring's
+   original text protocol unchanged - so the same commands work here, in
+   LightBlue and in nRF Connect. */
+const NUS="6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_RX="6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const NUS_TX="6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+let ledRx=null, ledQueue=Promise.resolve(), ledBuf="", ledMode=2, hasLeds=false;
+/* the ten the pod firmware offers, in the order SIDS_LED_Ring.html used */
+const LED_PROGRAMS=[
+  {id:8,nm:"Slow green fill",hint:"LED 1, wait, LED 2, wait …",sw:["off","green"],group:"New"},
+  {id:9,nm:"Lila snake",     hint:"Head with a fading tail",   sw:["lila","snake"]},
+  {id:1,nm:"Lila",           hint:"Solid ZfE lila",            sw:["lila","lila"],group:"Colours & fills"},
+  {id:2,nm:"Original",       hint:"Red → green → red, blinks 3×",sw:["red","green"]},
+  {id:3,nm:"Red fills green",hint:"Red ring, green creeps round",sw:["red","green"]},
+  {id:4,nm:"Off fills red",  hint:"Dark ring, red creeps round",sw:["off","red"]},
+  {id:5,nm:"Off fills green",hint:"Dark ring, green creeps round",sw:["off","green"]},
+  {id:6,nm:"Red flashing",   hint:"250 ms on / 250 ms off",     sw:["red","off"],group:"Flashing"},
+  {id:7,nm:"Green flashing", hint:"250 ms on / 250 ms off",     sw:["green","off"]},
+  {id:0,nm:"Off",            hint:"All LEDs dark",              sw:["off","off"]},
+  {id:10,nm:"Step pulse",    hint:"One flash per step the pod counts", sw:["off","green"],group:"Driven by your steps"},
+  {id:11,nm:"Cadence meter", hint:"Ring fills with cadence",           sw:["off","green"]}
+];
+/* A preview of what the ring is doing, mirroring the firmware's timings. It
+   is a picture of the command that was sent, not a readback - the pod does
+   not report pixels, so the ring is the authority and this only tracks it. */
+const LED_COL={red:[255,48,48],green:[52,240,104],lila:[205,45,180]};
+const LED_N=12, LED_T={fill:120,hold:800,blinkOn:250,blinkOff:250,snake:90};
+const LED_TAIL=[255,150,85,45,20];
+let ledFrame=[], ledRun=0, ledWait=1000;
+for(let i=0;i<LED_N;i++) ledFrame.push({c:null,k:1});
+const ledPx=(i,c,k)=>{ ledFrame[i]={c:c||null,k:k==null?1:k}; };
+const ledAll=c=>{ for(let i=0;i<LED_N;i++) ledPx(i,c); };
+const ledSleep=(ms,id)=>new Promise(r=>setTimeout(()=>r(id!==ledRun),ms));
+
+async function ledFill(id,start,fillC,stepMs){
+  ledAll(start); if(await ledSleep(LED_T.hold,id)) return;
+  for(let i=0;i<LED_N;i++){ ledPx(i,fillC); if(await ledSleep(stepMs==null?ledWait:stepMs,id)) return; }
+  await ledSleep(LED_T.hold,id);
+}
+const LED_RUN={
+  0:async id=>{ ledAll(null); while(!(await ledSleep(400,id))); },
+  1:async id=>{ ledAll(LED_COL.lila); while(!(await ledSleep(400,id))); },
+  2:async id=>{
+    ledAll(LED_COL.red); if(await ledSleep(LED_T.hold,id)) return;
+    for(let i=0;i<LED_N;i++){ ledPx(i,LED_COL.green); if(await ledSleep(LED_T.fill,id)) return; }
+    if(await ledSleep(LED_T.hold,id)) return;
+    for(let i=LED_N-1;i>=0;i--){ ledPx(i,LED_COL.red); if(await ledSleep(LED_T.fill,id)) return; }
+    for(let b=0;b<3;b++){
+      ledAll(null); if(await ledSleep(LED_T.blinkOff,id)) return;
+      ledAll(LED_COL.red); if(await ledSleep(LED_T.blinkOn,id)) return;
+    }
+  },
+  3:id=>ledFill(id,LED_COL.red,LED_COL.green,LED_T.fill),
+  4:id=>ledFill(id,null,LED_COL.red,LED_T.fill),
+  5:id=>ledFill(id,null,LED_COL.green,LED_T.fill),
+  6:async id=>{ ledAll(LED_COL.red); if(await ledSleep(LED_T.blinkOn,id)) return; ledAll(null); await ledSleep(LED_T.blinkOff,id); },
+  7:async id=>{ ledAll(LED_COL.green); if(await ledSleep(LED_T.blinkOn,id)) return; ledAll(null); await ledSleep(LED_T.blinkOff,id); },
+  8:id=>ledFill(id,null,LED_COL.green,null),
+  9:async id=>{
+    for(let head=0;head<LED_N;head++){
+      ledAll(null);
+      LED_TAIL.forEach((v,k)=>ledPx((head-k+LED_N)%LED_N,LED_COL.lila,v/255));
+      if(await ledSleep(LED_T.snake,id)) return;
+    }
+  }
+};
+async function ledPreview(m){
+  const id=++ledRun;
+  while(id===ledRun && LED_RUN[m]) await LED_RUN[m](id);
+}
+function drawLedRing(){
+  const cv=el("ledring"); if(!cv) return;
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const w=cv.clientWidth||150;
+  if(cv.width!==Math.round(w*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(w*dpr); }
+  const c=cv.getContext("2d"), S=w, cx=S/2, cy=S/2;
+  c.setTransform(dpr,0,0,dpr,0,0);
+  c.clearRect(0,0,S,S);
+  const R=S*0.40, Ri=R*23/37, Rm=(R+Ri)/2, pkg=R*2*5/37;
+  c.beginPath(); c.arc(cx,cy,R,0,Math.PI*2); c.arc(cx,cy,Ri,0,Math.PI*2,true);
+  c.fillStyle="#0A0C0F"; c.fill("evenodd");
+  c.strokeStyle="#2A3340"; c.lineWidth=1;
+  c.beginPath(); c.arc(cx,cy,R,0,Math.PI*2); c.stroke();
+  c.beginPath(); c.arc(cx,cy,Ri,0,Math.PI*2); c.stroke();
+  const I=ledBright<=0?0:Math.pow(ledBright/255,0.45);
+  const at=i=>{ const a=-Math.PI/2+i*Math.PI*2/LED_N; return [cx+Math.cos(a)*Rm,cy+Math.sin(a)*Rm]; };
+  for(let i=0;i<LED_N;i++){
+    const [x,y]=at(i), f=ledFrame[i], on=f.c&&I>0&&f.k>0, s=on?I*f.k:0, base=[46,44,40];
+    const col=on?f.c.map((v,j)=>Math.round(base[j]+(v-base[j])*Math.min(1,s*1.25))):base;
+    c.beginPath(); c.arc(x,y,pkg*0.38,0,Math.PI*2);
+    c.fillStyle="rgb("+col.join(",")+")"; c.fill();
+  }
+  c.save(); c.globalCompositeOperation="lighter";
+  for(let i=0;i<LED_N;i++){
+    const f=ledFrame[i]; if(!f.c||I<=0||f.k<=0) continue;
+    const [x,y]=at(i), s=I*f.k, rad=pkg*(0.9+1.6*s), rgb=f.c.join(",");
+    const g=c.createRadialGradient(x,y,0,x,y,rad);
+    g.addColorStop(0,"rgba("+rgb+","+(0.85*s).toFixed(3)+")");
+    g.addColorStop(0.35,"rgba("+rgb+","+(0.32*s).toFixed(3)+")");
+    g.addColorStop(1,"rgba("+rgb+",0)");
+    c.fillStyle=g; c.beginPath(); c.arc(x,y,rad,0,Math.PI*2); c.fill();
+  }
+  c.restore();
+}
+let ledBright=50;
+
+function ledLog(t){ el("led-log").textContent=t; }
+
+function sendLed(text){
+  if(!ledRx){ ledLog("no ring on this firmware"); return; }
+  ledQueue=ledQueue
+    .then(()=>ledRx.writeValueWithoutResponse
+      ? ledRx.writeValueWithoutResponse(new TextEncoder().encode(text))
+      : ledRx.writeValue(new TextEncoder().encode(text)))
+    .catch(err=>ledLog("send failed: "+err.message));
+}
+
+/* ---- recorder: .krec files from the pod ---- */
+const rec={ have:false, phone:false, pod:false, session:0, chunks:[], bytes:0, lastSeq:-1, lostPk:0,
+            t0:0, dl:null, dlN:null, dlSeq:-1, dlLost:0, wake:null, list:[], eraseArm:false, podRoom:0 };
+const REC_DUR=[0,60,120,180,300,600];
+function crc32(u8){
+  let c=0xFFFFFFFF;
+  for(let i=0;i<u8.length;i++){ c^=u8[i]; for(let k=0;k<8;k++) c=(c>>>1)^(0xEDB88320&-(c&1)); }
+  return (c^0xFFFFFFFF)>>>0;
+}
+function recSave(parts,label){
+  const blob=new Blob(parts,{type:"application/octet-stream"});
+  const d=new Date(), z=n=>String(n).padStart(2,"0");
+  const name="kine_"+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+"_"+z(d.getHours())+z(d.getMinutes())+"_"+label+".krec";
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },4000);
+  return name;
+}
+async function recWake(on){
+  try{
+    if(on && "wakeLock" in navigator){ rec.wake=await navigator.wakeLock.request("screen"); }
+    else if(!on && rec.wake){ await rec.wake.release(); rec.wake=null; }
+  }catch(e){ /* not allowed here: the user keeps the screen on */ }
+}
+document.addEventListener("visibilitychange",()=>{ if(rec.phone && document.visibilityState==="visible") recWake(true); });
+function recPaint(){
+  el("rec-block").hidden=!rec.have;
+  el("btn-rec-phone").setAttribute("aria-pressed",String(rec.phone));
+  el("btn-rec-phone").textContent=rec.phone?"Stop and save":"Record to this device";
+  el("btn-rec-pod").setAttribute("aria-pressed",String(rec.pod));
+  el("btn-rec-pod").textContent=rec.pod?"Stop pod recording":"Record on the pod";
+  let t=[];
+  if(rec.phone){ const s=(performance.now()-rec.t0)/1000;
+    t.push("this device: "+Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0")+", "+(rec.bytes/1048576).toFixed(2)+" MB"+(rec.lostPk?", "+rec.lostPk+" packets lost":"")); }
+  if(rec.pod) t.push("pod flash: recording"+(rec.podRoom?" (room for ~"+Math.round(rec.podRoom/60)+" min)":""));
+  if(rec.dl) t.push("downloading session "+rec.dlN+": "+Math.round(rec.dl.got/1024)+" of "+Math.round(rec.dl.total/1024)+" KB");
+  if(t.length) el("rec-state").textContent=t.join(" · ");
+}
+setInterval(()=>{ if(rec.phone||rec.dl) recPaint(); },500);
+function recFinishPhone(clean){
+  if(!rec.chunks.length){ rec.phone=false; recWake(false); recPaint(); return; }
+  const name=recSave(rec.chunks,"s"+rec.session+"_device"+(clean?"":"_partial"));
+  el("rec-state").textContent=(clean?"saved ":"connection lost - saved what arrived as ")+name+" ("+(rec.bytes/1048576).toFixed(2)+" MB"+(rec.lostPk?", "+rec.lostPk+" packets lost":"")+")";
+  rec.chunks=[]; rec.phone=false; recWake(false); recPaint();
+}
+function onRec(e){
+  const d=e.target.value, kind=d.getUint8(0), seq=d.getUint16(1,true);
+  const u8=new Uint8Array(d.buffer,d.byteOffset,d.byteLength);
+  if(kind===1){
+    if(!rec.phone) return;
+    if(rec.lastSeq>=0 && seq!==((rec.lastSeq+1)&0xFFFF)) rec.lostPk+=((seq-rec.lastSeq-1)&0xFFFF);
+    rec.lastSeq=seq;
+    rec.chunks.push(u8.slice(3)); rec.bytes+=u8.length-3;
+  }else if(kind===2 && rec.dl){
+    const off=d.getUint32(3,true), n=u8.length-7;
+    if(off+n<=rec.dl.buf.length){ rec.dl.buf.set(u8.subarray(7),off); rec.dl.got+=n; }
+    if(rec.dlSeq>=0 && seq!==((rec.dlSeq+1)&0xFFFF)) rec.dlLost++;
+    rec.dlSeq=seq;
+  }else if(kind===3){
+    if(rec.dl){
+      const total=d.getUint32(3,true), crc=d.getUint32(7,true);
+      const data=rec.dl.buf.subarray(0,total);
+      const ok=crc32(data)===crc && rec.dlLost===0;
+      const name=recSave([data],"s"+rec.dlN+"_pod"+(ok?"":"_DAMAGED"));
+      el("rec-state").textContent=ok?"downloaded "+name:"download damaged ("+rec.dlLost+" packets lost) - saved as "+name+", try again";
+      rec.dl=null; recPaint();
+    }else if(rec.phone) recFinishPhone(true);
+  }
+}
+function recLine(line){
+  let m;
+  if((m=line.match(/^# rec phone session (\d+) started/))){ rec.session=+m[1]; rec.phone=true; rec.chunks=[]; rec.bytes=0; rec.lastSeq=-1; rec.lostPk=0; rec.t0=performance.now(); recWake(true); }
+  else if((m=line.match(/^# rec flash session (\d+) started, room for ~(\d+) s/))){ rec.pod=true; rec.podRoom=+m[2]; if(!rec.phone) rec.session=+m[1]; }
+  else if((m=line.match(/^# rec flash session (\d+) saved: (\d+) KB/))){ rec.pod=false; el("rec-state").textContent="pod session "+m[1]+" saved ("+m[2]+" KB) - list the recordings to download it"; }
+  else if(/^# rec: flash full/.test(line)){ el("rec-state").textContent="the pod's flash is full"; }
+  else if(/^# rec: /.test(line)){ el("rec-state").textContent=line.slice(7); if(/phone|viewer|MTU/.test(line)) rec.phone=false; if(/flash/.test(line)&&/first|busy|full|found|built|already/.test(line)) rec.pod=rec.pod&&/already/.test(line); }
+  else if((m=line.match(/^# session (\d+): (\d+) KB \(~(\d+) s\)/))){ rec.list.push({n:+m[1],kb:+m[2],s:+m[3]}); recList(); }
+  else if((m=line.match(/^# (\d+) session\(s\), (\d+) KB free(.*)/))){ el("rec-state").textContent=m[1]+" recording(s) on the pod, "+m[2]+" KB free"+(m[3]?" - the flash holds data from other firmware: erase it first":""); recList(); }
+  else if(/^# flash erased/.test(line)){ rec.list=[]; recList(); el("rec-state").textContent="the pod's flash is erased"; }
+  else if((m=line.match(/^# erasing (\d+)\/(\d+)/))) el("rec-state").textContent="erasing "+Math.round(100*m[1]/m[2])+"%";
+  else if(/^# mark/.test(line)) el("rec-state").textContent=line.slice(2)+" set";
+  recPaint();
+}
+function recList(){
+  const box=el("rec-list"); box.innerHTML="";
+  rec.list.forEach(r=>{
+    const row=document.createElement("div"); row.className="btn-row"; row.style.marginTop="6px";
+    const t=document.createElement("span"); t.className="note"; t.style.margin="0";
+    t.textContent="Session "+r.n+" · "+r.kb+" KB · ~"+Math.floor(r.s/60)+":"+String(r.s%60).padStart(2,"0");
+    const b=document.createElement("button"); b.className="btn"; b.textContent="Download";
+    b.addEventListener("click",()=>{
+      if(rec.dl){ el("rec-state").textContent="a download is already running"; return; }
+      rec.dl={buf:new Uint8Array(r.kb*1024+4096),got:0,total:r.kb*1024}; rec.dlN=r.n; rec.dlSeq=-1; rec.dlLost=0;
+      sendLed("Rd"+r.n); recPaint();
+    });
+    row.append(t,b); box.appendChild(row);
+  });
+}
+el("btn-rec-phone").addEventListener("click",()=>sendLed(rec.phone?"Rp0":"Rp"));
+el("btn-rec-pod").addEventListener("click",()=>{
+  const dur=REC_DUR[+el("s-rec-dur").value];
+  sendLed(rec.pod?"Rf0":(dur?"Rf"+dur:"Rf"));
+});
+el("btn-rec-sync").addEventListener("click",()=>sendLed("Rs"));
+el("btn-rec-mark").addEventListener("click",()=>sendLed("Rm"));
+el("btn-rec-list").addEventListener("click",()=>{ rec.list=[]; sendLed("Rl"); });
+el("btn-rec-erase").addEventListener("click",()=>{
+  if(!rec.eraseArm){ rec.eraseArm=true; el("btn-rec-erase").textContent="Tap again to erase everything";
+                     setTimeout(()=>{ rec.eraseArm=false; el("btn-rec-erase").textContent="Erase the pod's flash"; },4000); return; }
+  rec.eraseArm=false; el("btn-rec-erase").textContent="Erase the pod's flash"; sendLed("RE");
+});
+el("s-rec-dur").addEventListener("input",e=>{
+  const v=REC_DUR[+e.target.value]; el("o-rec-dur").textContent=v?(v/60)+" min":"until stopped";
+});
+
+function onLedText(e){
+  ledBuf+=new TextDecoder().decode(e.target.value);
+  let nl;
+  while((nl=ledBuf.indexOf("\n"))>=0){
+    const line=ledBuf.slice(0,nl).trim(); ledBuf=ledBuf.slice(nl+1);
+    if(!line) continue;
+    ledLog(line);
+    if(/^# (rec|session|\d+ session|flash erased|erasing|mark|download)/.test(line)) recLine(line);
+    const bm=line.match(/^BENCH ([01])/);
+    if(bm){ podFree=bm[1]==="1"; paintNav(); }
+    const mm=line.match(/^# mode (\w+) \((\w+)\)/);
+    if(mm){ podFree=mm[1]==="FREE"; podModeSel=mm[2]; paintNav(); }
+    const now=line.match(/^Now:\s*(\d+).*?b(\d+)/);
+    if(now){ setLedMode(+now[1],false);
+             el("s-led-bright").value=+now[2]; el("o-led-bright").textContent=now[2];
+             ledBright=+now[2];
+             const wm=line.match(/w(\d+)/); if(wm) ledWait=+wm[1]; }
+    const okm=line.match(/^OK (\d+) /);
+    if(okm) setLedMode(+okm[1],false);
+  }
+}
+
+function setLedMode(m,send){
+  ledMode=m;
+  document.querySelectorAll(".led").forEach(b=>
+    b.setAttribute("aria-pressed",String(+b.dataset.id===m)));
+  ledPreview(m);
+  if(send) sendLed(String(m));
+}
+
+function ledUiEnabled(on){
+  document.querySelectorAll(".led").forEach(b=>{ b.disabled=!on; });
+  el("s-led-bright").disabled=!on;
+  if(!on) ledLog(live?"this firmware has no LED ring":"not connected");
+}
+
+function setNote(msg,tone){
+  const n=el("ble-note");
+  n.textContent=msg;
+  n.style.color = tone==="bad" ? "var(--bad)" : (tone==="ok" ? "var(--ok)" : "var(--muted)");
+}
+
+async function connect(){
+  if(!navigator.bluetooth){
+    const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+    setNote(iOS
+      ? "Safari has never supported Web Bluetooth, on any version of iPadOS, and Chrome and Edge on iOS use the same engine. To connect the pod from an iPad you need Bluefy or WebBLE from the App Store. Everything else on this page works here as it is."
+      : "This browser has no Web Bluetooth. Use Chrome or Edge on desktop or Android, and open the standalone gait_viewer.html file if the page is embedded.","bad");
+    return;
+  }
+  try{
+    setNote("Choose Kinesthesia-Pod in the browser's device picker…");
+    /* Web Bluetooth only lets a page reach services it named at request time.
+       The filter covers the pod's own service; every OTHER service has to be
+       listed in optionalServices or getPrimaryService throws SecurityError.
+       Leaving Nordic UART out is why the LED controls stayed dead after a
+       successful connection - the pod was offering the service, and Chrome
+       was refusing to hand it over. */
+    bleDevice=await navigator.bluetooth.requestDevice({
+      filters:[{services:[SVC]}],
+      optionalServices:[NUS]
+    });
+    bleDevice.addEventListener("gattserverdisconnected",onDisconnect);
+    const server=await bleDevice.gatt.connect();
+    const svc=await server.getPrimaryService(SVC);
+    const motion=await svc.getCharacteristic(CHR_MOTION);
+    try{ cmdChar=await svc.getCharacteristic(CHR_CMD); }catch(e){ cmdChar=null; }
+    try{
+      const st=await svc.getCharacteristic(CHR_STATUS);
+      await st.startNotifications();
+      st.addEventListener("characteristicvaluechanged",e=>{
+        const d=e.target.value;
+        el("rate-label").textContent=d.getUint16(2,true)+" Hz pod";
+        const f=d.getUint8(1);
+        podInit=(f&0x01)!==0;
+        paintNav();
+      });
+    }catch(e){ /* status is optional */ }
+    await motion.startNotifications();
+    motion.addEventListener("characteristicvaluechanged",onMotion);
+    try{
+      const st=await svc.getCharacteristic(CHR_STEP);
+      await st.startNotifications();
+      st.addEventListener("characteristicvaluechanged",onStep);
+      hasStep=true;
+    }catch(e){ hasStep=false; }
+    try{
+      const sd=await svc.getCharacteristic(CHR_STRIDE);
+      await sd.startNotifications();
+      sd.addEventListener("characteristicvaluechanged",onStride);
+      navFw=true;
+    }catch(e){ navFw=false; }
+    if(navFw){
+      try{
+        const lv=await svc.getCharacteristic(CHR_LIVE);
+        await lv.startNotifications();
+        lv.addEventListener("characteristicvaluechanged",onLive);
+      }catch(e){}
+    }
+    try{
+      const nus=await server.getPrimaryService(NUS);
+      ledRx=await nus.getCharacteristic(NUS_RX);
+      const ntx=await nus.getCharacteristic(NUS_TX);
+      await ntx.startNotifications();
+      ntx.addEventListener("characteristicvaluechanged",onLedText);
+      hasLeds=true; ledUiEnabled(true);
+      sendLed("?");                        /* ask the ring what it is doing */
+      if(navFw) sendLed("B");              /* and which settings the filter runs */
+    }catch(e){
+      /* say why. A disabled button with no explanation is worse than an error. */
+      ledRx=null; hasLeds=false; ledUiEnabled(false);
+      el("led-log").textContent = /security|not allowed|permitted/i.test(e.message)
+        ? "the page is not allowed to reach the ring service"
+        : "no LED ring on this firmware ("+e.name+")";
+    }
+    try{
+      const mc=await svc.getCharacteristic(CHR_ACOUSTIC);
+      await mc.startNotifications();
+      mc.addEventListener("characteristicvaluechanged",onAcoustic);
+      hasMic=true;
+    }catch(e){ hasMic=false; }
+    try{
+      const rc=await svc.getCharacteristic(CHR_REC);
+      await rc.startNotifications();
+      rc.addEventListener("characteristicvaluechanged",onRec);
+      rec.have=true;
+    }catch(e){ rec.have=false; }
+    recPaint();
+    try{
+      const od=await svc.getCharacteristic(CHR_ODOM);
+      await od.startNotifications();
+      od.addEventListener("characteristicvaluechanged",onOdom);
+      hasOdom=true;
+    }catch(e){ hasOdom=false; }   // older firmware: orientation only
+    live=true;
+    clearStepState();
+    odomWrap.prev=null; odomWrap.off=[0,0,0]; lastStride=null;
+    el("nav-row").hidden=!navFw;
+    /* The shoe stays on its fixed point, as in the builds that looked right on
+       the desk: only orientation moves it. Position is opt-in (Simulation ->
+       Dead reckoning) - on a real pod it wandered and jumped while the shoe
+       sat still. */
+    if(usePos){ usePos=false; el("t-pos").setAttribute("aria-pressed","false"); trail.length=0;
+                cam.target[0]=cam.target[1]=0; cam.target[2]=0.10; }
+    paintNav();
+    el("chip-source").className="chip live";
+    el("src-label").textContent="Pod — live";
+    el("btn-connect").textContent="Disconnect pod";
+    el("btn-zero").disabled=!cmdChar;
+    el("btn-recal").disabled=!cmdChar;
+    el("btn-respos").disabled=!cmdChar||!hasOdom;
+    el("odom-note").hidden=!hasOdom;
+    el("sim-note").textContent = navFw
+      ? "Live pod data turns the shoe on a fixed point: orientation from the pod's gated Mahony filter, as in xiaolv. Steps, contact times and stride lengths still come from the pod. Dead reckoning (below) moves the shoe too - experimental."
+      : !hasOdom
+      ? "Live pod data is driving the shoe. This firmware sends orientation only, so the shoe rotates in place."
+      : usePos
+        ? "Live pod data is driving the shoe, including dead-reckoned position \u2014 which drifts until the accelerometer is calibrated."
+        : "Live pod data is driving the shoe's orientation. Dead reckoning is off, so the shoe rotates in place and cannot drift. Turn it on under Simulation if you want to watch the position estimate.";
+    setNote("Connected to "+(bleDevice.name||"pod")+".","ok");
+  }catch(err){
+    setNote("Could not connect: "+err.message,"bad");
+  }
+}
+function onDisconnect(){
+  if(rec.phone) recFinishPhone(false);         /* keep what arrived */
+  if(rec.dl){ el("rec-state").textContent="download interrupted"; rec.dl=null; }
+  rec.have=false; rec.pod=false; recPaint();
+  live=false; cmdChar=null; hasOdom=false; hasMic=false; hasStep=false;
+  ledRx=null; hasLeds=false; ledUiEnabled(false);
+  clearStepState();
+  navFw=false; el("nav-row").hidden=true;
+  el("btn-respos").disabled=true;
+  el("odom-note").hidden=true;
+  el("chip-source").className="chip sim";
+  el("src-label").textContent="Synthetic gait";
+  el("btn-connect").textContent="Connect pod over Bluetooth";
+  el("btn-zero").disabled=true; el("btn-recal").disabled=true;
+  el("rate-label").textContent="— Hz";
+  setNote("Pod disconnected. Back to the synthetic runner.");
+}
+let lastPktT=0;
+function onMotion(e){
+  const d=e.target.value;
+  liveQ=qNorm([d.getInt16(0,true)/10000, d.getInt16(2,true)/10000,
+               d.getInt16(4,true)/10000, d.getInt16(6,true)/10000]);
+  liveAcc=[d.getInt16(8,true)/1000, d.getInt16(10,true)/1000, d.getInt16(12,true)/1000];
+  liveGyr=[d.getInt16(14,true)/10, d.getInt16(16,true)/10, d.getInt16(18,true)/10];
+  livePkts++;
+  const now=performance.now();
+  if(now-lastPktT>1000){ liveRate=livePkts; livePkts=0; lastPktT=now; }
+}
+function onStep(e){
+  const d=e.target.value;
+  sf.n         = d.getUint16(0,true);
+  const contact= d.getUint16(2,true), flight=d.getUint16(4,true);
+  sf.swing     = d.getUint16(8,true);
+  sf.angle10   = d.getInt16(10,true);
+  sf.pron10    = d.getInt16(12,true);
+  sf.pronRate  = d.getInt16(14,true);
+  sf.duty      = d.getUint8(16);
+  sf.varTenths = d.getUint8(17);
+  sf.drift     = d.getUint8(18);
+  const f      = d.getUint8(19);
+  sf.driver    = f & 0x0F;
+  sf.baseline  = (f & 0x10)!==0;
+  sf.alert     = (f & 0x20)!==0;
+  pushStep(contact, flight);
+}
+
+/* Nothing the synthetic runner produced may survive into live mode. Without
+   this, connecting a pod that sends no step packets leaves the last synthetic
+   runner's drift score, step count and per-step features on screen, labelled
+   as if they came from the pod - including a strike level and a mic lead from
+   a firmware with no microphone. A viewer that invents numbers is worse than
+   one that shows none. */
+function clearStepState(){
+  stepLog.length = 0;
+  hoverIdx = -1;
+  Object.assign(sf, {duty:0,varTenths:0,angle10:0,swing:0,pron10:0,pronRate:0,
+                     drift:0,driver:0,baseline:false,alert:false,n:0});
+  Object.assign(acoustic, {db:-128,lead:-128,onsets:0,noise:-128,base:-128,
+                           drops:0,running:false,clipped:false,ready:false,primed:false,
+                           verdict:0,conf:0,unconf:0,deaf:0,unchecked:0});
+  simGait.reset();
+}
+
+function pushStep(contact,flight){
+  stepLog.push({n:sf.n, drift:sf.drift, base:sf.baseline, alert:sf.alert});
+  if(stepLog.length>600) stepLog.shift();
+  odom.contact=contact; odom.flight=flight;
+}
+
+function onAcoustic(e){
+  const d=e.target.value;
+  acoustic.db     = d.getInt8(0);
+  acoustic.lead   = d.getInt8(1);
+  acoustic.onsets = d.getUint16(2,true);
+  acoustic.noise  = d.getInt8(4);
+  acoustic.base   = d.getInt8(5);
+  acoustic.drops  = d.getUint8(6);
+  const f=d.getUint8(7);
+  acoustic.running=(f&0x01)!==0;
+  acoustic.clipped=(f&0x02)!==0;
+  acoustic.ready  =(f&0x04)!==0;
+  acoustic.primed =(f&0x08)!==0;
+  acoustic.verdict=f&0x70;               /* set only on the packet sent with a landing */
+}
+
+function onOdom(e){
+  const d=e.target.value;
+  /* int16 mm wraps every 65.5 m on the ESKF firmware: unwrap it */
+  const raw=[d.getInt16(0,true), d.getInt16(2,true), d.getInt16(4,true)];
+  if(odomWrap.prev) for(let i=0;i<3;i++){
+    const dd=raw[i]-odomWrap.prev[i];
+    if(dd>32768) odomWrap.off[i]-=65536; else if(dd<-32768) odomWrap.off[i]+=65536;
+  }
+  odomWrap.prev=raw;
+  odom.p=raw.map((r,i)=>(r+odomWrap.off[i])/1000);
+  odom.v=[d.getInt16(6,true)/1000, d.getInt16(8,true)/1000, d.getInt16(10,true)/1000];
+  const fl=d.getUint8(12);
+  odom.stance    =(fl&0x01)!==0;
+  odom.coasting  =(fl&0x02)!==0;
+  odom.untracked =(fl&0x04)!==0;
+  odom.sinceStance=((fl>>4)&0x0F)*0.2;
+  odom.steps  = d.getUint8(13);
+  odom.contact= d.getUint16(14,true);
+  odom.flight = d.getUint16(16,true);
+  odom.stride = d.getUint16(18,true);
+}
+/* one report per completed stride (or hand move) */
+function onStride(e){
+  const d=e.target.value;
+  const s={ steps:d.getUint16(0,true), fwd:d.getInt16(2,true), lat:d.getInt16(4,true),
+            len:d.getUint16(6,true), peak:d.getUint16(8,true),
+            contact:d.getUint16(10,true), flight:d.getUint16(12,true),
+            vres:d.getUint8(14), flags:d.getUint8(15) };
+  s.valid=(s.flags&1)!==0; s.abandoned=(s.flags&2)!==0; s.bench=(s.flags&4)!==0; s.clipped=(s.flags&8)!==0;
+  s.mic = (s.flags&MIC_OK)?"ok":(s.flags&MIC_NO)?"no":(s.flags&MIC_DEAF)?"deaf":null;
+  if(!s.bench){
+    if(s.mic==="ok") acoustic.conf++; else if(s.mic==="no") acoustic.unconf++;
+    else if(s.mic==="deaf") acoustic.deaf++; else acoustic.unchecked++;
+  }
+  lastStride=s;
+  /* only real strides feed the fatigue engine: not hand moves, not strides
+     the pod could not track, and not landings the microphone contradicted.
+     A confirmed landing brings its strike level (the pod sends the acoustic
+     packet just before the stride), so "landing audibly harder" can work. */
+  if(s.valid && !s.bench && !s.abandoned && s.mic!=="no")
+    simGait.push(s.contact, s.flight, s.peak, (s.mic==="ok" && acoustic.db>-128) ? acoustic.db : null);
+  paintNav();
+}
+function onLive(e){
+  const d=e.target.value;
+  const f=d.getUint8(8);
+  podStanceS=(f&1)!==0;
+  const free=(f&4)!==0;
+  if(free!==podFree){ podFree=free; paintNav(); }
+}
+function paintNav(){
+  if(!navFw) return;
+  for(const [id,m] of [["btn-mode-auto","AUTO"],["btn-mode-gait","GAIT"],["btn-mode-free","FREE"]])
+    el(id).setAttribute("aria-pressed",String(podModeSel===m));
+  let t = podInit ? "Initialising — keep the pod still for 2 s. "
+                  : "Running "+(podFree?"in-hand":"gait")+" settings"+(podModeSel==="AUTO"?" (auto)":"")+". ";
+  if(lastStride){
+    const s=lastStride;
+    t += "Last "+(s.bench?"move":"stride")+": "+(s.len/1000).toFixed(2)+" m"+
+         (s.bench?"":", clearance "+(s.peak/10).toFixed(0)+" cm")+
+         (s.clipped?" — sensor clipped, reads short":"")+(s.valid?"":" — not tracked")+
+         (s.bench?"":s.mic==="ok"?" — mic heard the strike"
+                    :s.mic==="no"?" — mic heard no strike: left out of the fatigue trend"
+                    :s.mic==="deaf"?" — mic can't hear this surface":"");
+  }
+  el("nav-state").textContent=t;
+  el("btn-respos").disabled=!cmdChar||!hasOdom;
+}
+async function sendCmd(code){
+  if(!cmdChar) return;
+  try{ await cmdChar.writeValue(new Uint8Array([code])); }
+  catch(err){ setNote("Command failed: "+err.message,"bad"); }
+}
+
+/* ---- camera interaction ---- */
+let dragging=false,lx=0,ly=0;
+canvas.addEventListener("pointerdown",e=>{
+  dragging=true; lx=e.clientX; ly=e.clientY; canvas.setPointerCapture(e.pointerId);
+  setView("free");
+});
+canvas.addEventListener("pointermove",e=>{
+  if(!dragging) return;
+  cam.az -= (e.clientX-lx)*0.008;
+  cam.el = clamp(cam.el + (e.clientY-ly)*0.006, -0.35, 1.35);
+  lx=e.clientX; ly=e.clientY;
+});
+canvas.addEventListener("pointerup",e=>{dragging=false;});
+canvas.addEventListener("wheel",e=>{
+  e.preventDefault();
+  cam.dist=clamp(cam.dist*(1+Math.sign(e.deltaY)*0.09),0.35,2.4);
+},{passive:false});
+
+const VIEWS={
+  sagittal:{az:-Math.PI/2,el:0.16},
+  frontal:{az:0.0,el:0.16},
+  transverse:{az:-Math.PI/2,el:1.32},
+  free:null
+};
+function setView(name){
+  document.querySelectorAll(".plane").forEach(b=>
+    b.setAttribute("aria-pressed", String(b.dataset.view===name)));
+  const v=VIEWS[name];
+  if(v){ cam.az=v.az; cam.el=v.el; }
+}
+document.querySelectorAll(".plane").forEach(b=>
+  b.addEventListener("click",()=>setView(b.dataset.view)));
+
+/* ---- controls ---- */
+function ledSwatch(sw){
+  const c=n=>n==="off"?"#2E2C28":"rgb("+LED_COL[n==="snake"?"lila":n].join(",")+")";
+  if(sw[1]==="snake")
+    return '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="#2E2C28" stroke-width="3"/><path d="M11 3 A8 8 0 0 1 19 11" fill="none" stroke="'+c("lila")+'" stroke-width="3"/></svg>';
+  return '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="8" fill="none" stroke="'+c(sw[0])+'" stroke-width="3"/><path d="M11 3 A8 8 0 1 1 3 11" fill="none" stroke="'+c(sw[1])+'" stroke-width="3"/></svg>';
+}
+LED_PROGRAMS.forEach(p=>{
+  if(p.group){ const g=document.createElement("div"); g.className="led-group"; g.textContent=p.group; el("leds").appendChild(g); }
+  const b=document.createElement("button");
+  b.className="led"; b.type="button"; b.dataset.id=p.id; b.disabled=true;
+  b.setAttribute("aria-pressed",String(p.id===ledMode));
+  b.innerHTML=ledSwatch(p.sw)+'<span class="t"><b>'+p.nm+'</b><small>'+p.hint+'</small></span><span class="k">'+p.id+'</span>';
+  b.addEventListener("click",()=>setLedMode(p.id,true));
+  el("leds").appendChild(b);
+});
+ledPreview(ledMode);
+let ledBrightT=null;
+el("s-led-bright").addEventListener("input",e=>{
+  el("o-led-bright").textContent=e.target.value; ledBright=+e.target.value;
+  if(ledBrightT) return;                    /* throttle: do not flood the link */
+  ledBrightT=setTimeout(()=>{ ledBrightT=null; sendLed("b"+el("s-led-bright").value); },150);
+});
+ledUiEnabled(false);
+
+el("btn-connect").addEventListener("click",()=>{
+  if(live && bleDevice && bleDevice.gatt.connected){ bleDevice.gatt.disconnect(); }
+  else connect();
+});
+el("btn-zero").addEventListener("click",()=>sendCmd(1));
+el("btn-recal").addEventListener("click",()=>sendCmd(2));
+el("btn-respos").addEventListener("click",()=>{ trail.length=0; sendCmd(4);
+  cam.target[0]=cam.target[1]=0; cam.target[2]=0.10; odomWrap.prev=null; odomWrap.off=[0,0,0]; });
+el("btn-follow").addEventListener("click",()=>{
+  follow=!follow;
+  el("btn-follow").setAttribute("aria-pressed",String(follow));
+});
+el("btn-play").addEventListener("click",()=>{
+  playing=!playing;
+  el("btn-play").textContent=playing?"Pause":"Play";
+});
+el("btn-reroll").addEventListener("click",()=>{
+  trail.length=0; stepLog.length=0; simGait.reset(); newRunner();
+  acoustic.db=-128; acoustic.lead=-128; acoustic.base=-128;
+});
+el("s-fatigue").addEventListener("input",e=>{
+  fatigue=+e.target.value/100;
+  el("o-fatigue").textContent = fatigue<0.05?"fresh"
+    : fatigue<0.4?"settling in" : fatigue<0.75?"working" : "late in a long run";
+});
+
+el("s-cadence").addEventListener("input",e=>{
+  runner.cadence=+e.target.value;
+  el("o-cadence").textContent=runner.cadence+" spm";
+});
+el("s-speed").addEventListener("input",e=>{
+  speed=+e.target.value/100;
+  el("o-speed").textContent=speed.toFixed(2)+"×";
+});
+el("s-variation").addEventListener("input",e=>{
+  runner.variation=+e.target.value/100;
+  el("o-variation").textContent =
+    runner.variation<0.2?"metronomic":(runner.variation<0.55?"medium":"ragged");
+});
+el("btn-mode-auto").addEventListener("click",()=>{ podModeSel="AUTO"; sendCmd(8); paintNav(); });
+el("btn-mode-gait").addEventListener("click",()=>{ podModeSel="GAIT"; podFree=false; sendCmd(6); paintNav(); });
+el("btn-mode-free").addEventListener("click",()=>{ podModeSel="FREE"; podFree=true; sendCmd(7); paintNav(); });
+el("btn-level").addEventListener("click",()=>sendCmd(3));
+el("t-pos").addEventListener("click",()=>{
+  usePos=!usePos;
+  el("t-pos").setAttribute("aria-pressed",String(usePos));
+  trail.length=0;
+  if(!usePos){ cam.target[0]=cam.target[1]=0; cam.target[2]=0.10; }
+});
+for(const [id,key] of [["t-axes","axes"],["t-trail","trail"],["t-grid","grid"]]){
+  el(id).addEventListener("click",()=>{
+    opts[key]=!opts[key];
+    el(id).setAttribute("aria-pressed",String(opts[key]));
+    if(key==="trail") trail.length=0;
+  });
+}
+
+/* ---- timeline chrome ---- */
+function layoutTimeline(){
+  const duty=clamp(runner.duty,0.2,0.5);
+  el("tl-stance").style.width=(duty*100).toFixed(1)+"%";
+  el("tl-flight-label").style.left=(duty*100+2).toFixed(1)+"%";
+  const evs=[["IC",0],["flat",duty*0.16],["heel off",duty*0.58],["toe off",duty],["peak swing",duty+(1-duty)*0.5]];
+  el("tl-events").innerHTML=evs.map(([n,p])=>
+    '<span class="tl-ev" style="left:'+(p*100).toFixed(1)+'%">'+n+'</span>').join("");
+}
+
+/* Which side of the shoe the camera is on, and whether that puts the shoe's
+   left on your right. Looking at the shoe from in front is looking at it face
+   to face: tilt the real pod to the left and the screen shows it leaning
+   right, correctly and confusingly. Nothing said so until now, which made
+   every rotation look like a sign error in the firmware. */
+function viewLabel(){
+  const deg = Math.atan2(Math.sin(cam.az), Math.cos(cam.az)) * 180/Math.PI;
+  const a = Math.abs(deg);
+  const where = a <= 45 ? "from the toe"
+              : a >= 135 ? "from the heel"
+              : deg > 0 ? "from the shoe's left"
+                        : "from the shoe's right";
+  return a < 90 ? where + " \u2014 mirrored: the shoe's left is on your right"
+                : where;
+}
+
+/* =====================================================================
+   screen link
+   ---------------------------------------------------------------------
+   One page, two roles, decided by what the device can do.
+
+   BROADCAST: this machine has Web Bluetooth and a pod. Once sharing is on
+   it POSTs the current state to the relay 20 times a second.
+
+   FOLLOW: this device has no Web Bluetooth - an iPad, most likely - so it
+   asks the relay for that state instead and renders it exactly as if it had
+   arrived over Bluetooth. Nothing else in the page changes: the same
+   liveQ/liveAcc/liveGyr feed the same renderer.
+   ===================================================================== */
+let shareOn=false, following=false, relayOk=false, lastRelayMs=0;
+
+async function relayPost(){
+  if(!shareOn || !live) return;
+  try{
+    await fetch("/state",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({q:liveQ,a:liveAcc,g:liveGyr,rate:liveRate,
+                           odom:hasOdom?odom:null,t:Date.now()})});
+    relayOk=true;
+  }catch(e){ relayOk=false; }
+}
+
+async function relayPoll(){
+  try{
+    const r=await fetch("/state",{cache:"no-store"});
+    const j=await r.json();
+    if(!j.state || j.age>2.0){
+      following=false;
+      el("link-note").textContent="Relay is running, but no pod is being shared yet. "+
+        "On the computer with the pod: connect it, then switch on Share to other screens.";
+      return;
+    }
+    /* feed the same variables a Bluetooth notification would */
+    liveQ=qNorm(j.state.q);
+    liveAcc=j.state.a; liveGyr=j.state.g;
+    liveRate=j.state.rate||0;
+    if(j.state.odom){ Object.assign(odom,j.state.odom); hasOdom=true; }
+    if(!following){
+      following=true; live=true;
+      clearStepState();
+      el("chip-source").className="chip live";
+      el("src-label").textContent="Following the relay";
+      el("btn-connect").disabled=true;
+      el("link-note").textContent="Receiving the pod from another computer on this "+
+        "network. This screen draws; it does not connect to anything.";
+      el("sim-note").textContent="Live pod data, relayed from the computer that holds "+
+        "the Bluetooth connection.";
+    }
+    lastRelayMs=Date.now();
+  }catch(e){
+    if(following){
+      following=false; live=false;
+      el("chip-source").className="chip sim";
+      el("src-label").textContent="Synthetic gait";
+      el("link-note").textContent="Lost the relay. Is the script still running on the "+
+        "other computer, and is this device on the same Wi-Fi?";
+    }
+  }
+}
+
+/* A device with no Web Bluetooth has nothing to lose by asking: if a relay is
+   there, follow it; if not, the synthetic runner carries on as before. */
+const canBle = !!navigator.bluetooth;
+if(!canBle){
+  el("btn-connect").textContent="No Bluetooth in this browser";
+  setInterval(relayPoll,40);
+  relayPoll();
+}else{
+  /* is a relay serving this page? then sharing is possible */
+  fetch("/state",{cache:"no-store"}).then(r=>{
+    if(!r.ok) throw new Error("no relay");     /* a static host answers 404 */
+    relayOk=true; el("btn-share").disabled=false;
+    el("link-note").textContent="A relay is running. Connect the pod, then switch this "+
+      "on and open the address the script printed on the iPad.";
+  }).catch(()=>{
+    el("btn-share").disabled=true;
+    el("link-note").textContent="Open this page through kinesthesia_relay.py "+
+      "(http://localhost:8080) to share it to other screens. Opened as a file, the "+
+      "page works normally but has nothing to share through.";
+  });
+  setInterval(relayPost,50);
+}
+
+el("btn-share").addEventListener("click",()=>{
+  shareOn=!shareOn;
+  el("btn-share").setAttribute("aria-pressed",String(shareOn));
+  el("btn-share").textContent=shareOn?"Sharing — stop":"Share to other screens";
+  el("link-note").textContent=shareOn
+    ? "Sharing. Open the second address the script printed on the iPad."
+    : "Stopped sharing.";
+});
+
+/* =====================================================================
+   main loop
+   ===================================================================== */
+function frame(t){
+  if(!lastT) lastT=t;
+  let dt=(t-lastT)/1000; lastT=t;
+  dt=Math.min(dt,0.05);
+
+  let q,pos,pitch,roll,yaw,stance;
+
+  if(live){
+    q=liveQ;
+    pos = (hasOdom && usePos)
+        ? [odom.p[0], odom.p[1], 0.11+((navFw&&podFree)?odom.p[2]:Math.max(0,odom.p[2]))]
+        : [0,0,0.11];
+    const e=qToEuler(q); roll=e[0]; pitch=e[1]; yaw=e[2];
+    accMag=Math.hypot(liveAcc[0],liveAcc[1],liveAcc[2]);
+    gyrY=liveGyr[1];
+    stance = hasOdom ? odom.stance : (accMag<1.4 && Math.abs(gyrY)<60);
+    el("rate-label").textContent=(liveRate||0)+" Hz";
+  }else{
+    const cycleSec=120/runner.cadence;                 // one stride = two steps
+    if(playing){
+      const before=phase;
+      phase+=dt*speed/cycleSec;
+      if(phase>=1){
+        phase-=1;
+        /* the fatigue signature, applied before the next step is generated */
+        const F=fatigue;
+        const cyc=120/runner.cadence*1000;
+        const duty=clamp(runner.duty*step.dutyJit,0.25,0.45);
+        const jit=(1+2.2*F)*runner.variation;
+        const contact=duty*cyc*(1+0.10*F)*(1+0.03*jit*(Math.random()*2-1));
+        const flight =(cyc-duty*cyc)*(1-0.06*F)*(1+0.03*jit*(Math.random()*2-1));
+        const swingMm=step.rise*(1-0.14*F)*1000;
+        /* what the mic would have heard: a rearfoot lands louder than a
+           forefoot, and everyone lands harder as they tire */
+        const db=-30 + step.strike*0.28 + 6.0*F + rand(-0.8,0.8);
+        acoustic.db=Math.round(db);
+        acoustic.lead=Math.round(1+rand(-2,2));      /* IMU contact - click, as the ESKF pod reports it */
+        acoustic.conf++;
+        acoustic.noise=-46; acoustic.onsets=simGait.steps+1;
+        acoustic.base=simGait.audio?Math.round(simGait.baseDb):-128;
+        acoustic.running=true; acoustic.ready=simGait.audio; acoustic.primed=true;
+        sf.angle10=Math.round(step.strike*10);
+        sf.pron10 =Math.round(Math.abs(step.ev)*10);
+        sf.pronRate=Math.round(Math.abs(step.ev)*14);
+        simGait.push(contact, flight, swingMm, db);
+        newStep(); layoutTimeline(); trail.length=0;
+      }
+      void before;
+    }
+    const P=gaitPose(phase);
+    q=P.q; pos=P.pos; pitch=P.pitch; roll=P.roll; yaw=P.yaw; stance=P.stance;
+    cycleMs=cycleSec*1000;
+    contactMs=P.duty*cycleMs;
+    flightMs=cycleMs-contactMs;
+
+    /* derive pod signals the way the real pod would see them */
+    if(prevQ && dt>0.0005){
+      const dq=qMul(qConj(prevQ),q);
+      const ang=2*Math.acos(clamp(Math.abs(dq[0]),-1,1));
+      const s=Math.sqrt(Math.max(1e-9,1-dq[0]*dq[0]));
+      const sgn=dq[0]<0?-1:1;
+      gyrY = sgn*(dq[2]/s)*ang/dt*R2D;
+      const vel=[(pos[0]-prevPos[0])/dt,(pos[1]-prevPos[1])/dt,(pos[2]-prevPos[2])/dt];
+      const acc=[(vel[0]-prevVel[0])/dt,(vel[1]-prevVel[1])/dt,(vel[2]-prevVel[2])/dt];
+      const aw=[acc[0]/9.81, acc[1]/9.81, acc[2]/9.81+1];
+      const ab=qRot(qConj(q),aw);
+      accMag=Math.hypot(ab[0],ab[1],ab[2]);
+      prevVel=vel;
+    }
+    /* foot-strike transient: a short damped ring, which is what actually
+       makes an accel trace look like a foot-mounted IMU */
+    const sinceIC=phase*cycleSec;
+    if(sinceIC<0.06){
+      const k=Math.exp(-sinceIC*55)*Math.cos(sinceIC*2*Math.PI*38);
+      accMag+= (3.2+2.6*(step.strike/20))*Math.abs(k);
+    }
+    prevQ=q; prevPos=pos;
+  }
+
+  fpsN++;
+  if(t-fpsT>800){ fps=Math.round(fpsN*1000/(t-fpsT)); fpsN=0; fpsT=t;
+    if(!live) el("rate-label").textContent=fps+" fps sim"; }
+
+  if(!isFinite(accMag)) accMag=1;
+  if(!isFinite(gyrY)) gyrY=0;
+  accMag=clamp(accMag,0,20); gyrY=clamp(gyrY,-2000,2000);
+
+  accHist[histI]=accMag; gyrHist[histI]=gyrY;
+  histI=(histI+1)%accHist.length;
+  if(accMag>peakA) peakA=accMag;
+  if(gyrY<peakToeOff) peakToeOff=gyrY;
+
+  if(opts.trail && (!live || usePos)){
+    const a=podAnchor();
+    const r=qRot(q,[a[0],a[1],a[2]+0.012]);
+    trail.push([r[0]+pos[0], r[1]+pos[1], r[2]+pos[2]]);
+    if(trail.length>190) trail.shift();
+  }
+
+  if(follow && live && hasOdom && usePos){
+    /* follow in all three axes: in hand mode the shoe can go below the start
+       height, and a camera that only follows sideways loses it off screen */
+    const tz = navFw ? pos[2]-0.01 : 0.10;
+    const far = Math.hypot(pos[0]-cam.target[0], pos[1]-cam.target[1], tz-cam.target[2]) > 0.6;
+    const k = far ? 1 : 0.15;
+    cam.target[0]+=(pos[0]-cam.target[0])*k;
+    cam.target[1]+=(pos[1]-cam.target[1])*k;
+    cam.target[2]+=(tz-cam.target[2])*k;
+  }
+
+  render(q,pos);
+
+  /* ---- readouts ---- */
+  setAngle("pitch",pitch,45);
+  setAngle("roll",roll,25);
+  setAngle("yaw",yaw,25);
+
+  if(live && hasOdom){
+    const period=odom.contact+odom.flight;
+    const spm = period>50 ? Math.round(60000/period) : 0;
+    el("m-cadence").innerHTML = (spm?spm:"&mdash;")+"<span class=\"u\">spm</span>";
+    el("m-contact").innerHTML = (odom.contact||"&mdash;")+"<span class=\"u\">ms</span>";
+    el("m-flight").innerHTML  = (odom.flight ||"&mdash;")+"<span class=\"u\">ms</span>";
+    el("m-stride").innerHTML  = (odom.stride?(odom.stride/10).toFixed(0):"&mdash;")+"<span class=\"u\">cm</span>";
+    el("m-steps").textContent = odom.steps;
+  } else if(live){
+    el("m-cadence").innerHTML = "&mdash;<span class=\"u\">spm</span>";
+    el("m-contact").innerHTML = "&mdash;<span class=\"u\">ms</span>";
+    el("m-flight").innerHTML  = "&mdash;<span class=\"u\">ms</span>";
+    el("m-stride").innerHTML  = "&mdash;<span class=\"u\">cm</span>";
+    el("m-steps").textContent = "—";
+  } else {
+    el("m-cadence").innerHTML = runner.cadence+"<span class=\"u\">spm</span>";
+    el("m-contact").innerHTML = contactMs.toFixed(0)+"<span class=\"u\">ms</span>";
+    el("m-flight").innerHTML  = flightMs.toFixed(0)+"<span class=\"u\">ms</span>";
+    el("m-stride").innerHTML  = "&mdash;<span class=\"u\">cm</span>";
+    el("m-steps").textContent = "—";
+  }
+  el("m-toeoff").innerHTML  = Math.abs(peakToeOff).toFixed(0)+"<span class=\"u\">&deg;/s</span>";
+  el("m-contact-angle").innerHTML  = live ? "&mdash;<span class=\"u\">&deg;</span>"
+        : step.strike.toFixed(1)+"<span class=\"u\">&deg;</span>";
+  el("m-peaka").innerHTML   = peakA.toFixed(1)+"<span class=\"u\">g</span>";
+
+  el("cap-acc").textContent=accMag.toFixed(2)+" g";
+  el("cap-gyr").textContent=gyrY.toFixed(0)+" °/s";
+  drawStrip(el("strip-acc"),accHist,"#FF8A3D",1,4.4);
+  drawStrip(el("strip-gyr"),gyrHist,"#4EA8FF",0,0.022);
+  drawDriftChart();
+  updateGaitPanels();
+
+  if((checkTick=(checkTick+1)%10)===0) runChecks();
+  el("view-from").textContent = viewLabel();
+  drawLedRing();
+
+  el("tl-phase").textContent = live ? (hasOdom ? (stance?"stance":"flight")
+                                               : (stance?"stance-like":"flight-like"))
+        : "phase "+phase.toFixed(2)+" · "+(stance?"stance":"flight");
+  el("tl-cursor").style.left=(live?0:phase*100).toFixed(2)+"%";
+
+  requestAnimationFrame(frame);
+}
+
+/* Plausibility, not correctness: each of these is something a real foot
+   cannot do. A failing check does not say which component is wrong, but it
+   does say the picture should not be believed. */
+function runChecks(){
+  const box=el("checks");
+  if(!live){
+    box.innerHTML='<div class="check"><i></i><span class="n">Synthetic gait</span>'+
+                  '<span class="d">checks need a pod</span></div>';
+    el("badge").hidden=true;
+    return;
+  }
+  const rows=[];
+  const speed=Math.hypot(odom.v[0],odom.v[1]);
+
+  if(hasOdom){
+    rows.push({
+      n:"Stance anchor",
+      s: odom.untracked?"bad":(odom.coasting?"warn":"ok"),
+      d: odom.untracked ? "none for "+odom.sinceStance.toFixed(1)+"s+"
+       : odom.coasting  ? "coasting "+odom.sinceStance.toFixed(1)+"s"
+       : (odom.stance?"planted":"in swing")
+    });
+    /* a foot cannot travel at speed while the accelerometer says 1 g and the
+       gyro says nothing - that combination means the position is invented */
+    const quiet = Math.abs(accMag-1)<0.06 && Math.abs(gyrY)<30;
+    rows.push({
+      n:"Motion consistency",
+      s: (quiet && speed>0.4)?"bad":"ok",
+      d: (quiet && speed>0.4) ? speed.toFixed(2)+" m/s, sensors still"
+                              : speed.toFixed(2)+" m/s"
+    });
+    const st=odom.stride/1000;
+    rows.push({
+      n:"Stride length",
+      s: odom.stride===0?"":(st<0.2||st>2.5)?"bad":(st<0.4||st>2.0)?"warn":"ok",
+      d: odom.stride?st.toFixed(2)+" m":"no step yet"
+    });
+    const period=odom.contact+odom.flight;
+    const spm=period>50?60000/period:0;
+    rows.push({
+      n:"Cadence",
+      s: !spm?"":(spm<60||spm>230)?"bad":(spm<120||spm>200)?"warn":"ok",
+      d: spm?Math.round(spm)+" spm":"no step yet"
+    });
+  }
+  if(hasMic){
+    /* the mic is a second opinion on initial contact; when it disagrees
+       badly with the stance detector, one of the two is wrong */
+    const lead=acoustic.lead;
+    rows.push({
+      n:"Microphone",
+      s: !acoustic.running?"bad":(!acoustic.primed?"warn":(acoustic.clipped?"warn":"ok")),
+      d: !acoustic.running ? "stopped"
+       : !acoustic.primed  ? "floor settling"
+       : (acoustic.clipped ? "clipping, floor "+acoustic.noise+" dB"
+                           : "floor "+acoustic.noise+" dB")
+    });
+    if(navFw){
+      /* ESKF firmware: lead = the IMU's contact time minus the strike click.
+         Both are clocked to about a millisecond, so it should sit near zero. */
+      rows.push({
+        n:"Mic vs IMU contact",
+        s: lead<=-128?"":(Math.abs(lead)>30)?"bad":(Math.abs(lead)>15)?"warn":"ok",
+        d: lead<=-128 ? "no strike yet" : (lead>=0?"+":"")+lead+" ms"
+      });
+      const heard=acoustic.conf+acoustic.unconf, all=heard+acoustic.deaf;
+      const share=heard?acoustic.conf/heard:0;
+      rows.push({
+        n:"Landings confirmed",
+        s: all<5?"":(acoustic.deaf>heard)?"warn":(share>=0.9?"ok":share>=0.75?"warn":"bad"),
+        d: all<5 ? "waiting for strides"
+         : (acoustic.deaf>heard) ? "mic can't hear this surface ("+acoustic.deaf+" of "+all+")"
+         : Math.round(100*share)+"% ("+acoustic.unconf+" not heard)"
+      });
+    } else rows.push({
+      n:"Mic vs stance",
+      s: lead<=-128?"":(lead<-20||lead>140)?"bad":(lead<0||lead>90)?"warn":"ok",
+      d: lead<=-128 ? "no strike yet" : lead+" ms ahead"
+    });
+    if(acoustic.drops>2) rows.push({
+      n:"Audio blocks dropped", s:"warn", d:acoustic.drops+" since boot"
+    });
+  }
+  rows.push({
+    n:"Gravity magnitude",
+    s: Math.abs(accMag-1)>0.6?"":(Math.abs(accMag-1)>0.08?"warn":"ok"),
+    d: accMag.toFixed(3)+" g"
+  });
+  rows.push({
+    n:"Packet rate",
+    s: liveRate===0?"":(liveRate<35?"bad":(liveRate<45?"warn":"ok")),
+    d: (liveRate||0)+" Hz"
+  });
+
+  box.innerHTML=rows.map(r=>
+    '<div class="check '+(r.s||"")+'"><i></i><span class="n">'+r.n+
+    '</span><span class="d">'+r.d+'</span></div>').join("");
+
+  const b=el("badge");
+  if(hasOdom && odom.untracked){
+    b.hidden=false; b.className="badge";
+    b.textContent="Position not tracked — no stance in "+
+                  odom.sinceStance.toFixed(1)+"s. The shoe is held where it was.";
+  }else if(hasOdom && odom.coasting){
+    b.hidden=false; b.className="badge warn";
+    b.textContent="Coasting — no stance for "+odom.sinceStance.toFixed(1)+
+                  "s, position is being bled toward a stop.";
+  }else b.hidden=true;
+}
+
+function setAngle(name,val,range){
+  const pct=clamp(val/range,-1,1)*50;
+  const bar=el("bar-"+name);
+  bar.style.left = (pct<0 ? 50+pct : 50)+"%";
+  bar.style.width= Math.abs(pct)+"%";
+  bar.style.background = Math.abs(val)>range*0.8 ? "var(--warn)" : "var(--accent)";
+  el("num-"+name).textContent=val.toFixed(1)+"°";
+}
+
+/* decay the peak holds so they track the current runner */
+setInterval(()=>{ peakA=Math.max(1,peakA*0.94); peakToeOff*=0.94; },1200);
+
+/* Test hook: drives live mode without a pod, so the trust layer can be
+   exercised (and shown to someone) with no hardware on the bench. From the
+   browser console:
+     __podTest({odom:{untracked:true,sinceStance:3.0,v:[1.2,0,0]},acc:1.00,gyr:2})
+   Call __podTest(null) to hand control back to the synthetic runner. */
+window.__podTest=function(patch){
+  if(!patch){ live=false; hasOdom=false; hasMic=false; runChecks(); return; }
+  const wasLive=live;
+  live=true; hasOdom=patch.hasOdom!==false;
+  hasMic=patch.hasMic===true || !!patch.acoustic;
+  hasStep=patch.hasStep===true;
+  if(!wasLive) clearStepState();
+  if(patch.odom) Object.assign(odom,patch.odom);
+  if(patch.acoustic) Object.assign(acoustic,patch.acoustic);
+  if(patch.q) liveQ=qNorm(patch.q);
+  /* feed the same variables a real notification would, so the hook exercises
+     the actual path rather than a shortcut around it */
+  if(patch.acc!==undefined) liveAcc=[0,0,patch.acc];
+  if(patch.gyr!==undefined) liveGyr=[0,patch.gyr,0];
+  if(patch.rate!==undefined) liveRate=patch.rate;
+  if(patch.navFw!==undefined) navFw=patch.navFw;
+  /* raw packets, through the real handlers: {acousticPkt:[8 bytes]},
+     {stridePkt:[20 bytes]} */
+  const dv=b=>({target:{value:new DataView(new Uint8Array(b).buffer)}});
+  if(patch.acousticPkt) onAcoustic(dv(patch.acousticPkt));
+  if(patch.stridePkt) onStride(dv(patch.stridePkt));
+  if(patch.recPkts) patch.recPkts.forEach(b=>onRec(dv(b)));      /* record characteristic */
+  if(patch.nusText) onLedText(dv(new TextEncoder().encode(patch.nusText)));
+  if(patch.recHave){ rec.have=true; recPaint(); }
+  el("chip-source").className="chip live";
+  el("src-label").textContent="Pod — live (test)";
+  runChecks();
+};
+
+window.addEventListener("resize",resize);
+window.addEventListener("orientationchange",()=>setTimeout(resize,250));
+/* Safari settles layout after the first paint and again once webfonts land;
+   a single resize() at startup can measure a stage that is not there yet. */
+if(window.ResizeObserver) new ResizeObserver(resize).observe(canvas.parentElement);
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(resize).catch(()=>{});
+setTimeout(resize,60); setTimeout(resize,400);
+resize();
+setView("free");
+newRunner();
+layoutTimeline();
+runChecks();
+requestAnimationFrame(frame);
+
+})();
+</script>
+
+</html>

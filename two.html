@@ -100,9 +100,9 @@ details p{margin:6px 0}
         <div class="row controls">
           <button class="btn" id="b-zero" disabled>Zero both</button>
           <button class="btn" id="b-auto" disabled>Auto mode both</button>
-          <button class="btn" id="b-rec" disabled>Record on both pods</button>
+          <button class="btn" id="b-rec" disabled>Record → this device</button>
           <button class="btn" id="b-mark" disabled>Mark both</button>
-          <button class="btn" id="b-stop" disabled>Stop recording both</button>
+          <button class="btn" id="b-stop" disabled>Stop recording</button>
           <button class="btn" id="b-reset">Reset path</button>
           <button class="btn" id="b-demo">Demo: two simulated pods</button>
         </div>
@@ -121,6 +121,8 @@ details p{margin:6px 0}
     <div class="pods">
       <div class="card pod L" id="pod-L"></div>
       <div class="card pod R" id="pod-R"></div>
+      <div class="card"><h2>Recordings on this device</h2><div id="recs" class="kv"></div>
+        <div class="row controls" id="rec-dir"></div></div>
       <div class="card"><h2>Messages</h2><div class="log" id="log"></div></div>
     </div>
   </div>
@@ -135,6 +137,7 @@ const CHR_STATUS="f5a30003-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CHR_CMD="f5a30004-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CHR_STRIDE="f5a30008-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CHR_LIVE="f5a30009-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_REC="f5a3000a-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const NUS="6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX="6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX="6e400003-b5a3-f393-e0a9-e50e24dcca9e";
@@ -148,6 +151,10 @@ const WIDTH_PULL=0.2;                     // share of the gap to normal width cl
 const AHEAD_MIN=1.0, AHEAD_FRAC=0.75;     // a foot may lead by max(1 m, 0.75 x stride)
 const DRIFT_GAIN=0.3, DRIFT_STRAIGHT=25;  // learn the heading gap on landings within 25 deg
 const PAIR_WINDOW_MS=3000;                // the other foot's landing must be this recent
+/* a "stride" whose foot never lifted is not a step: on a still pod the
+   firmware can cycle stance (9 Nov: clearance 0 mm on all 16 such strides,
+   42-165 mm on every real step) */
+const NO_LIFT_MM=15;
 
 const R2D=180/Math.PI, D2R=Math.PI/180;
 const el=id=>document.getElementById(id);
@@ -169,6 +176,10 @@ class Pod{
     this.rate=0; this.vbat=0; this.mode=""; this.chip="";
     this.strides=[]; this.used=0; this.skipped=0; this.mic={ok:0,no:0,deaf:0};
     this.lastStride=null; this.swing=null; this.queue=Promise.resolve(); this.nusBuf="";
+    this.noLift=0;
+    this.rec=null;           // a streamed recording coming in (survives reconnects)
+    this.recAsk=null;        // "KB of old sessions on the flash": waiting for the user's yes
+    this.podBehindKb=null;   // what the pod still holds unconfirmed
     this.reset();
   }
   reset(){
@@ -207,6 +218,7 @@ const model={
     pod.lastStride=s; pod.strides.push(s); if(pod.strides.length>40) pod.strides.shift();
     if(s.mic==="ok") pod.mic.ok++; else if(s.mic==="no") pod.mic.no++; else if(s.mic==="deaf") pod.mic.deaf++;
     if(!s.valid || s.bench || s.abandoned){ pod.skipped++; pod.swing=null; return; }
+    if(s.peak<NO_LIFT_MM){ pod.skipped++; pod.noLift++; pod.swing=null; return; }
     pod.used++;
     const other=this.other(pod.side);
     const raw=Math.atan2(s.hy,s.hx);
@@ -296,6 +308,7 @@ function onText(pod, e){
     const mm=line.match(/^# mode (\w+) \((\w+)\)/); if(mm) pod.mode=mm[1]+(mm[2]==="AUTO"?" (auto)":" (forced)");
     const sd=line.match(/^# side (\S) \((\S+)\) chip (\w+)/); if(sd) pod.chip=sd[3];
     if(/^# (rec|mode|side)/.test(line)) log(pod.side+": "+line.slice(2));
+    recLine(pod, line);
   }
 }
 
@@ -318,7 +331,7 @@ async function connect(side){
       c.addEventListener("characteristicvaluechanged",e=>fn(pod,e.target.value)); return c; }catch(e){ return null; } };
     try{ pod.cmd=await svc.getCharacteristic(CHR_CMD); }catch(e){ pod.cmd=null; }
     await sub(CHR_MOTION,onMotion); await sub(CHR_STATUS,onStatus);
-    const sd=await sub(CHR_STRIDE,onStride); await sub(CHR_LIVE,onLive);
+    const sd=await sub(CHR_STRIDE,onStride); await sub(CHR_LIVE,onLive); await sub(CHR_REC,onRec);
     if(!sd) log(side+": this firmware sends no strides - flash the current pod firmware");
     try{
       const nus=await server.getPrimaryService(NUS);
@@ -326,6 +339,7 @@ async function connect(side){
       const tx=await nus.getCharacteristic(NUS_TX); await tx.startNotifications();
       tx.addEventListener("characteristicvaluechanged",e=>onText(pod,e));
       sendText(pod,"B"); sendText(pod,"S");            // ask for its mode and chip ID
+      recResume(pod);
     }catch(e){ pod.nusRx=null; }
     log(side+": connected to "+dev.name);
     note(NAMES[side]+" connected."+(pods.L.dev&&pods.R.dev?" Both feet are live: stand still, feet parallel, then Zero both.":""),"ok");
@@ -346,6 +360,160 @@ function sendText(pod,text){
     .catch(e=>log(pod.side+": send failed: "+e.message));
 }
 function forBoth(fn){ for(const p of Object.values(pods)) if(p.dev) fn(p); }
+
+/* ---------------- streamed recording (firmware Rt) ----------------
+   The pod records to its flash and sends it on: [4][seq][offset][data],
+   then [5][seq][length][crc]. A byte is confirmed (Ra) only once it is in
+   this page's database, so a closed page or a crashed browser never loses
+   what the pod has already erased. A hole asks for a resend (Rn). */
+const store={
+  h:null,
+  open(){
+    if(!this.h) this.h=new Promise((res,rej)=>{
+      const r=indexedDB.open("kine-two-feet",1);
+      r.onupgradeneeded=()=>{ const d=r.result;
+        d.createObjectStore("recs",{keyPath:"id"}); d.createObjectStore("chunks",{keyPath:["id","off"]}); d.createObjectStore("prefs"); };
+      r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+    });
+    return this.h;
+  },
+  async run(names,mode,fn){
+    const d=await this.open();
+    return new Promise((res,rej)=>{ const t=d.transaction(names,mode); let out; t.oncomplete=()=>res(out); t.onerror=t.onabort=()=>rej(t.error||new Error("aborted")); out=fn(t); });
+  },
+  req(r){ return new Promise((res,rej)=>{ r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); },
+  putMeta(m){ return this.run(["recs"],"readwrite",t=>{ t.objectStore("recs").put(m); }); },
+  putChunk(m,off,data){ return this.run(["recs","chunks"],"readwrite",t=>{ t.objectStore("chunks").put({id:m.id,off,data}); t.objectStore("recs").put(m); }); },
+  async metas(){ const d=await this.open(); return this.req(d.transaction("recs").objectStore("recs").getAll()); },
+  async chunks(id){ const d=await this.open(); return this.req(d.transaction("chunks").objectStore("chunks").getAll(IDBKeyRange.bound([id,0],[id,Number.MAX_SAFE_INTEGER]))); },
+  del(id){ return this.run(["recs","chunks"],"readwrite",t=>{ t.objectStore("recs").delete(id); t.objectStore("chunks").delete(IDBKeyRange.bound([id,0],[id,Number.MAX_SAFE_INTEGER])); }); },
+  async getPref(k){ const d=await this.open(); return this.req(d.transaction("prefs").objectStore("prefs").get(k)); },
+  setPref(k,v){ return this.run(["prefs"],"readwrite",t=>{ t.objectStore("prefs").put(v,k); }); },
+};
+const CRC_T=(()=>{ const t=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[n]=c>>>0; } return t; })();
+function crc32(buf){ let c=0xFFFFFFFF; for(let i=0;i<buf.length;i++) c=CRC_T[(c^buf[i])&255]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+const pad=n=>String(n).padStart(2,"0");
+function recName(m){ const d=new Date(m.started); return `kine_${m.side==="L"?"left":"right"}_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.krec`; }
+let saveDir=null;                                   // a folder chosen on a computer (Chrome / Edge)
+let recList=[];                                     // what the Recordings card shows
+
+/* the receiving side of one pod's stream */
+function recOpen(pod, meta){
+  pod.rec={meta, got:meta.got, saved:meta.got, pend:[], ahead:new Map(), lastNak:0, lastAck:0, flushing:false, end:null};
+}
+function recTake(r, off, data){
+  if(off+data.length<=r.got) return;                       // already have it
+  if(off>r.got){ if(r.ahead.size<3000) r.ahead.set(off,data); return; }
+  const add=d=>{ r.pend.push(d); r.got+=d.length; };
+  add(data.subarray(r.got-off));
+  for(let hit=true; hit && r.ahead.size; ){                // packets that came after the hole
+    hit=false;
+    for(const [o,d] of r.ahead) if(o<=r.got){ r.ahead.delete(o); if(o+d.length>r.got) add(d.subarray(r.got-o)); hit=true; }
+  }
+}
+function onRec(pod, dv){
+  const r=pod.rec; if(!r) return;
+  const type=dv.getUint8(0);
+  if(type===4){
+    const off=dv.getUint32(3,true);
+    recTake(r, off, new Uint8Array(dv.buffer.slice(dv.byteOffset+7, dv.byteOffset+dv.byteLength)));
+    if(r.ahead.size && performance.now()-r.lastNak>300){ r.lastNak=performance.now(); sendText(pod,"Rn"+r.got); }
+  }else if(type===5){
+    r.end={len:dv.getUint32(3,true), crc:dv.getUint32(7,true)};
+  }
+}
+/* every 0.5 s: store what arrived in order, then confirm exactly that */
+async function recFlush(pod){
+  const r=pod.rec; if(!r || r.flushing) return;
+  r.flushing=true;
+  try{
+    if(r.pend.length){
+      const parts=r.pend; r.pend=[];
+      const len=parts.reduce((a,p)=>a+p.length,0), buf=new Uint8Array(len); let k=0;
+      for(const p of parts){ buf.set(p,k); k+=p.length; }
+      const off=r.saved; r.meta.got=off+len;
+      try{ await store.putChunk(r.meta, off, buf); }
+      catch(e){ r.pend=parts.concat(r.pend); r.meta.got=off; log(pod.side+": could not store - "+e.message); return; }
+      r.saved=off+len;
+      if(pod.dev){ sendText(pod,"Ra"+r.saved); r.lastAck=performance.now(); }
+    }else if(pod.dev && performance.now()-r.lastAck>2000){ sendText(pod,"Ra"+r.saved); r.lastAck=performance.now(); }
+    if(r.end && r.saved>=r.end.len) await recFinish(pod);
+  }finally{ r.flushing=false; }
+}
+async function recFinish(pod){
+  const r=pod.rec; pod.rec=null; pod.podBehindKb=null;
+  const blob=await recBlob(r.meta);
+  const bytes=new Uint8Array(await blob.arrayBuffer());
+  r.meta.done=true; r.meta.got=bytes.length; r.meta.endLen=r.end.len;
+  r.meta.crcOk = bytes.length===r.end.len && crc32(bytes)===r.end.crc;
+  await store.putMeta(r.meta);
+  log(pod.side+": recording complete, "+(bytes.length/1024).toFixed(0)+" KB, checksum "+(r.meta.crcOk?"ok":"WRONG"));
+  note(`${pod.side==="L"?"Left":"Right"} recording received (${(bytes.length/1024).toFixed(0)} KB)`+(r.meta.crcOk?", checksum ok.":" - checksum does NOT match."), r.meta.crcOk?"ok":"bad");
+  await recAutoSave(r.meta, blob);
+  await recRefresh();
+}
+async function recBlob(meta){
+  const ch=(await store.chunks(meta.id)).sort((a,b)=>a.off-b.off);
+  return new Blob(ch.map(c=>c.data),{type:"application/octet-stream"});
+}
+/* computer with a chosen folder: written there; other computers: a download;
+   iPhone / Bluefy: kept here, with Share and Download on the card */
+async function recAutoSave(meta, blob){
+  const touch = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints>1 && !window.showDirectoryPicker);
+  if(saveDir){
+    try{
+      if((await saveDir.queryPermission({mode:"readwrite"}))!=="granted" && (await saveDir.requestPermission({mode:"readwrite"}))!=="granted") throw new Error("no permission for the folder");
+      const fh=await saveDir.getFileHandle(recName(meta),{create:true}), w=await fh.createWritable(); await w.write(blob); await w.close();
+      meta.savedTo=saveDir.name+"/"+recName(meta); await store.putMeta(meta); log("saved "+meta.savedTo); return;
+    }catch(e){ log("could not write to the folder: "+e.message); }
+  }
+  if(!touch){ recDownload(meta, blob); meta.savedTo="Downloads"; await store.putMeta(meta); }
+}
+function recDownload(meta, blob){
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=recName(meta);
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+async function recShare(meta){
+  const blob=await recBlob(meta), file=new File([blob],recName(meta),{type:"application/octet-stream"});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:recName(meta)}); }catch(e){ if(!/abort/i.test(e.name)) note("Share failed: "+e.message,"bad"); }
+  }else note("This browser can't share files. Use Download, or open this page on a computer to save it there.","warn");
+}
+async function recRefresh(){ try{ recList=(await store.metas()).sort((a,b)=>b.started-a.started); }catch(e){ recList=[]; } paintRecs(); }
+
+/* start / stop on every connected pod */
+async function recStartAll(){
+  for(const pod of Object.values(pods)){
+    if(!pod.dev || pod.rec) continue;
+    const meta={id:pod.side+"-"+Date.now(), side:pod.side, chip:pod.chip||"", started:Date.now(), got:0, done:false};
+    await store.putMeta(meta); recOpen(pod, meta); pod.recAsk=null;
+    sendText(pod,"Rt");
+  }
+  note("Recording on the pods and streaming here. Keep this page open; it saves as it goes.","ok"); recRefresh();
+}
+function recStopAll(){ forBoth(p=>{ if(p.rec) sendText(p,"Rt0"); }); note("Stopping: the pods send what is left, then the files are saved.","warn"); }
+async function recCancel(pod, why){
+  if(!pod.rec) return; const id=pod.rec.meta.id; pod.rec=null; pod.podBehindKb=null;
+  if(!pod.rec || id) await store.del(id); if(why) note(why,"bad"); recRefresh();
+}
+/* lines from the pod about the stream */
+function recLine(pod, line){
+  let m;
+  if((m=line.match(/^# rec: (\d+) KB of old sessions/))){ pod.recAsk={kb:+m[1]}; paint(); return; }
+  if(/^# rec stream session \d+ started/.test(line)){ pod.recAsk=null; return; }
+  if((m=line.match(/^# stream: written (\d+) KB, sent (\d+) KB, confirmed (\d+) KB, behind (\d+) KB/))){ pod.podBehindKb=+m[4]; return; }
+  if(/^# rec: /.test(line) && pod.rec && pod.rec.saved===0 && !/old sessions/.test(line)){
+    recCancel(pod, (pod.side==="L"?"Left":"Right")+" pod did not start: "+line.slice(7));
+  }
+}
+setInterval(()=>{ for(const p of Object.values(pods)) recFlush(p); }, 500);
+setInterval(()=>{ forBoth(p=>{ if(p.rec && !p.rec.end) sendText(p,"R"); }); }, 3000);
+/* a page that was closed mid-recording picks the stream up again */
+async function recResume(pod){
+  if(pod.rec) { sendText(pod,"Rn"+pod.rec.saved); return; }
+  const open=recList.find(m=>m.side===pod.side && !m.done);
+  if(open){ recOpen(pod, open); sendText(pod,"Rn"+open.got); log(pod.side+": resuming the unfinished recording from "+(open.got/1024).toFixed(0)+" KB"); }
+}
 
 /* ---------------- demo: two simulated pods ---------------- */
 const demo={on:false, t:0, last:0, next:{}, raf:0};
@@ -484,6 +652,8 @@ function podCard(p){
     <dt>Chip</dt><dd>${p.chip||"–"}</dd>
   </dl>
   ${free?'<div class="note warn">In FREE (in-hand) mode: its strides are not used. Press Auto mode.</div>':""}
+  ${p.rec?`<div class="note ok">Recording: ${(p.rec.saved/1024).toFixed(0)} KB saved here${p.podBehindKb!=null?", "+p.podBehindKb+" KB still on the pod":""}${p.rec.end?" - finishing":""}</div>`:""}
+  ${p.recAsk?`<div class="note warn">${p.recAsk.kb} KB of old recordings are on this pod's flash. <button class="btn" data-erase="${p.side}">Erase them and record</button></div>`:""}
   <div class="row controls"><button class="btn ${p.side}" data-connect="${p.side}">${p.dev?"Disconnect":"Connect "+NAMES[p.side]}</button></div>`;
 }
 let lastPaint=0;
@@ -511,12 +681,16 @@ function paint(){
 }
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-connect]"); if(b) connect(b.dataset.connect);
+  const er=e.target.closest("[data-erase]"); if(er){ const p=pods[er.dataset.erase]; p.recAsk=null; sendText(p,"RtE"); paint(); }
+  const ra=e.target.closest("[data-rec]"); if(ra){ const m=recList.find(x=>x.id===ra.dataset.rec); if(!m) return;
+    if(ra.dataset.act==="share") recShare(m); else if(ra.dataset.act==="dl") recBlob(m).then(b=>recDownload(m,b)); else if(ra.dataset.act==="del" && confirm("Delete "+recName(m)+" from this device?")) store.del(m.id).then(recRefresh); }
+  if(e.target.closest("#b-dir")) window.showDirectoryPicker({mode:"readwrite"}).then(h=>{ saveDir=h; store.setPref("dir",h); paintRecs(); }).catch(()=>{});
 });
 el("b-zero").addEventListener("click",()=>{ forBoth(p=>sendCmd(p,CMD_ZERO)); model.reset(); model.drift=0; note("Zeroed both. Walk when ready.","ok"); });
 el("b-auto").addEventListener("click",()=>{ forBoth(p=>{ sendCmd(p,CMD_AUTO); sendText(p,"B"); }); });
-el("b-rec").addEventListener("click",()=>{ forBoth(p=>sendText(p,"Rf")); note("Recording on both pods. Pull them over USB afterwards.","ok"); });
+el("b-rec").addEventListener("click",()=>{ recStartAll(); });
 el("b-mark").addEventListener("click",()=>{ forBoth(p=>sendText(p,"Rm")); log("mark sent to both"); });
-el("b-stop").addEventListener("click",()=>{ forBoth(p=>sendText(p,"Rf0")); });
+el("b-stop").addEventListener("click",()=>{ recStopAll(); });
 el("b-reset").addEventListener("click",()=>{ model.reset(); paint(); });
 el("b-demo").addEventListener("click",()=>{ demo.on?stopDemo():startDemo(); });
 
@@ -528,6 +702,12 @@ cv.addEventListener("touchmove",e=>{ if(pinch&&e.touches.length===2){ e.preventD
   const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); view.scale=clamp(pinch.s*d/pinch.d,20,400); } },{passive:false});
 cv.addEventListener("touchend",()=>{ pinch=null; });
 
+function paintRecs(){
+  el("recs").innerHTML = recList.length ? recList.map(m=>`<dt>${recName(m)}<br><span style="color:var(--dim)">${(m.got/1024).toFixed(0)} KB · ${m.done?(m.crcOk?"complete, checksum ok":"complete, CHECKSUM WRONG"):"incomplete"}${m.savedTo?" · saved to "+m.savedTo:""}</span></dt><dd><button class="btn" data-rec="${m.id}" data-act="share">Share</button> <button class="btn" data-rec="${m.id}" data-act="dl">Download</button> <button class="btn" data-rec="${m.id}" data-act="del">Delete</button></dd>`).join("") : "<dt>none yet</dt><dd></dd>";
+  el("rec-dir").innerHTML = window.showDirectoryPicker ? `<button class="btn" id="b-dir">${saveDir?"Saving to: "+saveDir.name:"Choose a folder to save into"}</button>` : "";
+}
+store.getPref("dir").then(h=>{ if(h) saveDir=h; paintRecs(); }).catch(()=>{});
+recRefresh();
 window.addEventListener("resize",resize);
 resize(); paint();
 function frame(now){

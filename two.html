@@ -572,6 +572,7 @@ function recLine(pod, line){
   if(/^# rec: (flash full|flash chip|256 sessions|flash busy|the flash holds)/.test(line)){ pod.flashRec=false; note(who+" pod is NOT recording: "+line.slice(7),"bad"); return; }
   if(/^# erasing the flash/.test(line)){ note(who+" pod is erasing its memory…","warn"); return; }
   if(/^# flash erased/.test(line)){ pod.flashRec=false; note(who+" pod: memory erased, ready to record.","ok"); return; }
+  if(/^# rec: dropped \d+ KB of the stopped stream/.test(line)){ log(pod.side+": "+line.slice(2)); return; }
   if(/^# rec: (busy|no flash)/.test(line)){ note(who+" pod did not erase: "+(/busy/.test(line)?"it is recording or downloading. Stop the recording first.":"no flash chip."),"bad"); return; }
   if((m=line.match(/^# rec: (\d+) KB of old sessions/))){ pod.recAsk={kb:+m[1]}; paint(); return; }
   if(/^# rec stream session \d+ started/.test(line)){ pod.recAsk=null; return; }
@@ -843,9 +844,14 @@ el("b-stop").addEventListener("click",()=>{ forBoth(p=>{ if(!p.rec) sendText(p,"
 el("b-erase").addEventListener("click",()=>{
   const who=Object.values(pods).filter(p=>p.dev).map(p=>p.side==="L"?"left":"right");
   if(!who.length) return;
-  if(Object.values(pods).some(p=>p.dev&&(p.rec||p.flashRec))) return note("A pod is recording. Stop the recording first, then erase.","warn");
-  if(!confirm("Erase ALL recordings stored on the "+who.join(" and ")+" pod"+(who.length>1?"s":"")+"?\n\nRecordings that were not downloaded are lost for good.")) return;
-  forBoth(p=>sendText(p,"RE")); note("Erase sent. Wait for each pod to say its memory is erased.","warn");
+  if(Object.values(pods).some(p=>p.dev&&p.flashRec)) return note("A pod is recording to its flash. Stop the recording first, then erase.","warn");
+  /* a stopped stream whose tail this page never confirmed blocked every erase
+     (16 Nov, both pods); the pod now drops that tail on erase, and this page
+     keeps the part it already saved */
+  const open=Object.values(pods).some(p=>p.dev&&p.rec);
+  if(!confirm("Erase ALL recordings stored on the "+who.join(" and ")+" pod"+(who.length>1?"s":"")+"?\n\nRecordings that were not downloaded are lost for good."
+     +(open?"\n\nA streamed recording is not finished: the part this device already saved is kept, the rest on the pod is lost.":""))) return;
+  forBoth(p=>{ if(p.rec){ p.rec=null; p.podBehindKb=null; } sendText(p,"Rt0"); sendText(p,"RE"); }); recRefresh(); note("Erase sent. Wait for each pod to say its memory is erased.","warn");
 });
 el("b-reset").addEventListener("click",()=>{ model.reset(); paint(); });
 el("b-demo").addEventListener("click",()=>{ demo.on?stopDemo():startDemo(); });

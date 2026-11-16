@@ -100,6 +100,7 @@ details p{margin:6px 0}
         <div class="row controls">
           <button class="btn" id="b-zero" disabled>Zero both</button>
           <button class="btn" id="b-auto" disabled>Auto mode both</button>
+          <button class="btn primary" id="b-recpod" disabled>Record on the pods</button>
           <button class="btn" id="b-rec" disabled>Record → this device</button>
           <button class="btn" id="b-mark" disabled>Mark both</button>
           <button class="btn" id="b-stop" disabled>Stop recording</button>
@@ -499,6 +500,10 @@ async function recCancel(pod, why){
 /* lines from the pod about the stream */
 function recLine(pod, line){
   let m;
+  const who=pod.side==="L"?"Left":"Right";
+  if(/^# rec flash session \d+ started/.test(line)){ pod.flashRec=true; note(who+" pod is recording on its flash."+(pods.L.flashRec&&pods.R.flashRec?" Both are recording.":""),"ok"); return; }
+  if(/^# rec flash session \d+ saved/.test(line)){ pod.flashRec=false; note(who+" pod saved its recording: "+line.replace(/^# rec flash session \d+ saved: /,""),"ok"); return; }
+  if(/^# rec: (flash full|flash chip|256 sessions|flash busy|the flash holds)/.test(line)){ pod.flashRec=false; note(who+" pod is NOT recording: "+line.slice(7),"bad"); return; }
   if((m=line.match(/^# rec: (\d+) KB of old sessions/))){ pod.recAsk={kb:+m[1]}; paint(); return; }
   if(/^# rec stream session \d+ started/.test(line)){ pod.recAsk=null; return; }
   if((m=line.match(/^# stream: written (\d+) KB, sent (\d+) KB, confirmed (\d+) KB, behind (\d+) KB/))){ pod.podBehindKb=+m[4]; return; }
@@ -660,7 +665,7 @@ let lastPaint=0;
 function paint(){
   for(const s of ["L","R"]) el("pod-"+s).innerHTML=podCard(pods[s]);
   const anyDev=!!(pods.L.dev||pods.R.dev);
-  for(const id of ["b-zero","b-auto","b-rec","b-mark","b-stop"]) el(id).disabled=!anyDev;
+  for(const id of ["b-zero","b-auto","b-rec","b-recpod","b-mark","b-stop"]) el(id).disabled=!anyDev;
   el("b-demo").textContent=demo.on?"Stop demo":"Demo: two simulated pods";
   // both-feet numbers
   const now=performance.now(), land=model.landings;
@@ -689,8 +694,10 @@ document.addEventListener("click",e=>{
 el("b-zero").addEventListener("click",()=>{ forBoth(p=>sendCmd(p,CMD_ZERO)); model.reset(); model.drift=0; note("Zeroed both. Walk when ready.","ok"); });
 el("b-auto").addEventListener("click",()=>{ forBoth(p=>{ sendCmd(p,CMD_AUTO); sendText(p,"B"); }); });
 el("b-rec").addEventListener("click",()=>{ recStartAll(); });
+/* to each pod's own flash: nothing depends on the radio (streaming lost 8-18 % of samples on 12 Nov) */
+el("b-recpod").addEventListener("click",()=>{ forBoth(p=>{ sendText(p,"Re0"); sendText(p,"Rf"); }); note("Recording on the pods' own flash (about 6 min). Pull them over USB afterwards.","ok"); });
 el("b-mark").addEventListener("click",()=>{ forBoth(p=>sendText(p,"Rm")); log("mark sent to both"); });
-el("b-stop").addEventListener("click",()=>{ recStopAll(); });
+el("b-stop").addEventListener("click",()=>{ forBoth(p=>{ if(!p.rec) sendText(p,"Rf0"); }); recStopAll(); });
 el("b-reset").addEventListener("click",()=>{ model.reset(); paint(); });
 el("b-demo").addEventListener("click",()=>{ demo.on?stopDemo():startDemo(); });
 

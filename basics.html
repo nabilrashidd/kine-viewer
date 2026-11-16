@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kine Basics</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Same instrument-panel world as the other viewers. This page shows the basics
+   only: raw acceleration, the three angles, foot on / off the ground, and the
+   timing numbers that follow from landing and toe-off. It describes; it does
+   not judge (no good / bad colours). */
+:root{
+  --bg:#0E1116; --surface:#161B22; --raised:#232B36; --line:#2A3340; --text:#E6EAF1; --muted:#8C99AB; --dim:#5F6B7C;
+  --accent:#FF8A3D; --left:#4EA8FF; --right:#FF8A3D; --ok:#54DE93; --warn:#FFC24E; --bad:#FF5A5F;
+  --x:#FF6B6B; --y:#5BD68A; --z:#5BA8FF;
+  --f-display:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --f-body:"IBM Plex Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --f-mono:"IBM Plex Mono","SF Mono",Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--f-body);font-size:14px;line-height:1.5;
+     -webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased}
+button{font-family:inherit;color:inherit}
+.app{max-width:1180px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:12px}
+h1{font-family:var(--f-display);font-size:20px;margin:0}
+header .sub{color:var(--muted);font-size:13px} header a{color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+.card h2{font-family:var(--f-display);font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;min-height:36px}
+.btn:hover{border-color:var(--dim)}
+.btn.L{border-color:var(--left)} .btn.R{border-color:var(--right)} .btn.on{background:rgba(84,222,147,.14);border-color:var(--ok)}
+.note{margin-top:8px;font-size:13px;color:var(--muted);min-height:20px}
+.note.bad{color:var(--bad)} .note.warn{color:var(--warn)} .note.ok{color:var(--ok)}
+.pods{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,430px),1fr));gap:12px}
+.pod{border-top:3px solid var(--line);margin-bottom:0}
+.pod.L{border-top-color:var(--left)} .pod.R{border-top-color:var(--right)}
+.pod .top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.pod .name{font-family:var(--f-display);font-weight:600;font-size:16px}
+.chip{font-family:var(--f-mono);font-size:11px;padding:2px 7px;border-radius:99px;background:var(--raised);color:var(--muted);white-space:nowrap}
+.chip.on{background:rgba(84,222,147,.14);color:var(--ok)} .chip.sim{background:rgba(255,194,78,.14);color:var(--warn)}
+.duo{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;align-items:center}
+canvas{display:block;width:100%}
+canvas.shoe{height:120px} canvas.plot{height:130px} canvas.band{height:34px}
+.lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:10px;font-size:12px;color:var(--muted)}
+.lab b{font-weight:500;color:var(--text)}
+.vals{font-family:var(--f-mono);font-size:12.5px;white-space:nowrap}
+.vals i{font-style:normal;margin-left:8px} .vx{color:var(--x)} .vy{color:var(--y)} .vz{color:var(--z)}
+.foot{font-family:var(--f-display);font-weight:600;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line)}
+th{font-weight:500;color:var(--muted);font-size:12px} th:first-child,td:first-child{text-align:left}
+td{font-family:var(--f-mono)} td:first-child{font-family:var(--f-body)} td small{color:var(--dim);font-size:11px}
+th.l{color:var(--left)} th.r{color:var(--right)}
+.what{color:var(--muted);font-size:12.5px;margin:8px 0 0} .what b{color:var(--text);font-weight:500}
+#log{font-family:var(--f-mono);font-size:11px;color:var(--dim);white-space:pre-wrap;max-height:90px;overflow:auto;margin:0}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <h1>Kine Basics</h1>
+  <span class="sub">raw values, foot contact and timing · <a href="index.html">one-pod viewer</a> · <a href="two.html">two feet</a></span>
+</header>
+
+<div class="card">
+  <div class="row">
+    <button class="btn L" id="b-L">Connect left</button>
+    <button class="btn R" id="b-R">Connect right</button>
+    <button class="btn" id="b-zero">Zero angles</button>
+    <button class="btn" id="b-clear">Clear numbers</button>
+    <button class="btn" id="b-freeze">Freeze</button>
+    <button class="btn" id="b-demo">Demo</button>
+  </div>
+  <div class="note" id="note">Connect a pod, or press Demo to see the page with simulated walking.</div>
+</div>
+
+<div class="pods" id="pods"></div>
+
+<div class="card" style="margin-top:12px">
+  <h2>Timing, last 20 strides</h2>
+  <table>
+    <thead><tr><th>measure</th><th class="l">left</th><th class="r">right</th><th>right − left</th></tr></thead>
+    <tbody id="tbl"></tbody>
+  </table>
+  <p class="what"><b>Landing</b> = the foot touches the ground. <b>Toe-off</b> = it leaves. <b>Contact time</b> = landing to toe-off.
+  <b>Swing time</b> = toe-off to the next landing. <b>Stride time</b> = landing to the next landing of the same foot.
+  <b>Variability</b> = spread of the stride time, as a share of its mean. Numbers come from the pod's own step detection, which still
+  misses steps on a treadmill and has not been checked for toe-off. Raw values arrive 50 times a second.</p>
+</div>
+
+<div class="card"><h2>Log</h2><pre id="log"></pre></div>
+</div>
+
+<script>
+"use strict";
+const SVC="f5a30001-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const chr=n=>"f5a3000"+n+"-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_MOTION=chr(2), CHR_STATUS=chr(3), CHR_CMD=chr(4), CHR_STRIDE=chr(8), CHR_LIVE=chr(9);
+const CMD_ZERO=1;
+const NAMES={L:"Kine-Left",R:"Kine-Right"}, LONG={L:"Left foot",R:"Right foot"};
+const WINDOW_S=8, KEEP=20, NO_LIFT_MM=15;       // a "stride" whose foot never lifted is not a step
+const R2D=180/Math.PI;
+const el=id=>document.getElementById(id);
+const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const mean=a=>a.reduce((s,v)=>s+v,0)/a.length;
+const sd=a=>{ const m=mean(a); return Math.sqrt(mean(a.map(v=>(v-m)*(v-m)))); };
+function log(msg){ const L=el("log"); L.textContent=(new Date().toLocaleTimeString()+"  "+msg+"\n"+L.textContent).slice(0,3000); }
+function note(msg,tone){ const n=el("note"); n.textContent=msg; n.className="note"+(tone?" "+tone:""); }
+
+/* quaternion (w,x,y,z) -> yaw, pitch, roll in degrees (Z-Y-X order) */
+function angles(q){
+  const [w,x,y,z]=q;
+  return { yaw:Math.atan2(2*(w*z+x*y),1-2*(y*y+z*z))*R2D,
+           pitch:-Math.asin(clamp(2*(w*y-z*x),-1,1))*R2D,
+           roll:Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y))*R2D };
+}
+function rot(q,v){                               // rotate v by q
+  const [w,x,y,z]=q, [a,b,c]=v;
+  const tx=2*(y*c-z*b), ty=2*(z*a-x*c), tz=2*(x*b-y*a);
+  return [a+w*tx+(y*tz-z*ty), b+w*ty+(z*tx-x*tz), c+w*tz+(x*ty-y*tx)];
+}
+
+class Pod{
+  constructor(side){ this.side=side; this.dev=null; this.cmd=null; this.sim=false; this.queue=Promise.resolve(); this.reset(); }
+  reset(){ this.buf=[]; this.q=[1,0,0,0]; this.acc=[0,0,1]; this.ground=null; this.edges=[]; this.strides=[]; this.count=0;
+           this.rate=0; this.vbat=0; this.init=false; }
+  get live(){ return !!this.dev || this.sim; }
+  sample(t){ const a=angles(this.q);
+    this.buf.push({t, ax:this.acc[0], ay:this.acc[1], az:this.acc[2], pitch:a.pitch, roll:a.roll, yaw:a.yaw, g:this.ground});
+    while(this.buf.length && this.buf[0].t<t-WINDOW_S-1) this.buf.shift(); }
+  setGround(g,t){ if(this.ground!==null && g!==this.ground) this.edges.push({t, down:g});
+    this.ground=g; while(this.edges.length && this.edges[0].t<t-WINDOW_S-1) this.edges.shift(); }
+  stride(s){ if(!s.valid || s.peak<NO_LIFT_MM) return;
+    const T=s.contact+s.flight; if(T<300 || T>3000) return;
+    this.count++; this.strides.push(s); if(this.strides.length>KEEP) this.strides.shift(); }
+}
+const pods={L:new Pod("L"), R:new Pod("R")};
+let frozen=false, frozenAt=0;
+const now=()=>performance.now()/1000;
+
+/* ---------------- packets ---------------- */
+function onMotion(p,d){
+  p.q=[0,2,4,6].map(i=>d.getInt16(i,true)/10000);
+  p.acc=[8,10,12].map(i=>d.getInt16(i,true)/1000);
+  p.sample(now());
+}
+function onLive(p,d){ p.setGround((d.getUint8(8)&1)!==0, now()); }
+function onStatus(p,d){ p.init=(d.getUint8(1)&1)!==0; p.rate=d.getUint16(2,true); p.vbat=d.getUint16(4,true); }
+function onStride(p,d){ const f=d.getUint8(15);
+  p.stride({peak:d.getUint16(8,true), contact:d.getUint16(10,true), flight:d.getUint16(12,true), len:d.getUint16(6,true), valid:(f&1)!==0}); }
+
+/* ---------------- Bluetooth ---------------- */
+async function connect(side){
+  const p=pods[side];
+  if(p.dev){ try{ p.dev.gatt.disconnect(); }catch(e){} return; }
+  if(!navigator.bluetooth){ note("This browser has no Web Bluetooth. On iPhone use Bluefy; on a computer use Chrome or Edge.","bad"); return; }
+  if(demo.on) stopDemo();
+  try{
+    note("Choose "+NAMES[side]+" in the device list…");
+    const dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:NAMES[side]}], optionalServices:[SVC]});
+    p.reset(); p.dev=dev;
+    dev.addEventListener("gattserverdisconnected",()=>{ p.dev=null; p.cmd=null; log(side+": disconnected"); layout(); });
+    const svc=await (await dev.gatt.connect()).getPrimaryService(SVC);
+    const sub=async(uuid,fn)=>{ try{ const c=await svc.getCharacteristic(uuid); await c.startNotifications();
+      c.addEventListener("characteristicvaluechanged",e=>fn(p,e.target.value)); return c; }catch(e){ return null; } };
+    try{ p.cmd=await svc.getCharacteristic(CHR_CMD); }catch(e){ p.cmd=null; }
+    await sub(CHR_MOTION,onMotion); await sub(CHR_STATUS,onStatus); await sub(CHR_LIVE,onLive);
+    if(!await sub(CHR_STRIDE,onStride)) log(side+": this firmware sends no strides - flash the current pod firmware");
+    log(side+": connected to "+dev.name); note(NAMES[side]+" connected. Stand still, then press Zero angles.","ok");
+  }catch(e){ p.dev=null; note(/cancel/i.test(e.message)?"No pod chosen.":"Could not connect "+NAMES[side]+": "+e.message,"bad"); }
+  layout();
+}
+function zero(){ let n=0; for(const p of Object.values(pods)) if(p.cmd){ n++;
+    p.queue=p.queue.then(()=>p.cmd.writeValue(new Uint8Array([CMD_ZERO]))).catch(e=>log(p.side+": command failed: "+e.message)); }
+  note(n?"Angles zeroed on "+n+" pod"+(n>1?"s":"")+".":"Zero needs a connected pod.", n?"ok":"warn"); }
+
+/* ---------------- demo: two simulated walking feet ---------------- */
+const demo={on:false, timer:0, t0:0, last:{L:-1,R:-1}};
+function startDemo(){
+  for(const p of Object.values(pods)){ if(p.dev){ try{ p.dev.gatt.disconnect(); }catch(e){} } p.reset(); p.sim=true; }
+  demo.on=true; demo.t0=now(); demo.last={L:-1,R:-1}; demo.timer=setInterval(demoTick,20);
+  note("Demo: simulated walking, not a pod. The right foot is given a slightly longer contact time.","warn"); layout();
+}
+function stopDemo(){ clearInterval(demo.timer); demo.on=false; for(const p of Object.values(pods)){ p.sim=false; p.reset(); } layout(); }
+function demoTick(){
+  const t=now(), T=1.06;
+  for(const p of Object.values(pods)){
+    const contact=p.side==="R"?0.64:0.60, ph0=p.side==="R"?0.5:0;
+    const u=((t-demo.t0)/T+ph0)%1, k=Math.floor((t-demo.t0)/T+ph0), c=contact/T;
+    const down=u<c, sw=down?0:(u-c)/(1-c);
+    const pitch=(down ? (u<0.08*c? 12*(1-u/(0.08*c)) : -55*Math.pow(Math.max(0,(u/c-0.6)/0.4),2)) : -55*Math.cos(sw*Math.PI));
+    const pr=clamp(pitch,-60,60)/R2D, rr=(down?3*Math.sin(u/c*Math.PI):0)/R2D*(p.side==="R"?1:-1);
+    p.q=[Math.cos(pr/2)*Math.cos(rr/2), Math.cos(pr/2)*Math.sin(rr/2), -Math.sin(pr/2)*Math.cos(rr/2), Math.sin(pr/2)*Math.sin(rr/2)];
+    const hit=u<0.03 ? 3.2*Math.sin(u/0.03*Math.PI) : 0, n=()=>(Math.random()-0.5)*0.04;
+    p.acc=[ (down?0:1.6*Math.sin(sw*2*Math.PI)) + Math.sin(pr)+n(), 0.15*Math.sin(u*4*Math.PI)+n(), Math.cos(pr)+hit+(down?0:0.5*Math.cos(sw*2*Math.PI))+n() ];
+    p.setGround(down,t); p.sample(t);
+    if(k!==demo.last[p.side]){ if(demo.last[p.side]>=0){ const j=()=>Math.round((Math.random()-0.5)*24);
+        p.stride({peak:90, contact:Math.round(contact*1000)+j(), flight:Math.round((T-contact)*1000)+j(), len:1250, valid:true}); } demo.last[p.side]=k; }
+  }
+}
+
+/* ---------------- drawing ---------------- */
+function fit(c){ const r=window.devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight;
+  if(c.width!==Math.round(w*r) || c.height!==Math.round(h*r)){ c.width=Math.round(w*r); c.height=Math.round(h*r); }
+  const g=c.getContext("2d"); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,w,h); return [g,w,h]; }
+
+function drawPlot(c, buf, keys, cols, tNow, minSpan, unit){
+  const [g,w,h]=fit(c), L=34, T=6, B=h-6, t0=tNow-WINDOW_S;
+  let lo=Infinity, hi=-Infinity;
+  for(const s of buf) if(s.t>=t0) for(const k of keys){ if(s[k]<lo) lo=s[k]; if(s[k]>hi) hi=s[k]; }
+  if(!isFinite(lo)){ lo=-1; hi=1; }
+  const mid=(lo+hi)/2, span=Math.max(minSpan,(hi-lo)*1.15); lo=mid-span/2; hi=mid+span/2;
+  const X=t=>L+(t-t0)/WINDOW_S*(w-L-4), Y=v=>B-(v-lo)/(hi-lo)*(B-T);
+  g.font="10px "+css("--f-mono"); g.textBaseline="middle"; g.fillStyle=css("--dim"); g.strokeStyle=css("--line"); g.lineWidth=1;
+  const step=[0.5,1,2,5,10,20,45,90,180].find(s=>span/s<=4)||360;
+  for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step){ g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(w-4,Y(v)); g.stroke();
+    g.textAlign="right"; g.fillText((Math.abs(v)<1e-9?0:+v.toFixed(1))+unit,L-4,Y(v)); }
+  g.fillStyle="rgba(255,255,255,.045)";                    // shade where the foot is on the ground
+  let a=null; for(const s of buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ g.fillRect(X(a),T,X(s.t)-X(a),B-T); a=null; } }
+  if(a!==null) g.fillRect(X(a),T,X(tNow)-X(a),B-T);
+  g.lineWidth=1.5; g.lineJoin="round";
+  keys.forEach((k,i)=>{ g.strokeStyle=cols[i]; g.beginPath(); let pen=false, prev=null;
+    for(const s of buf){ if(s.t<t0) continue; const jump=prev!==null && Math.abs(s[k]-prev)>300;   // yaw wrap
+      if(!pen||jump){ g.moveTo(X(s.t),Y(s[k])); pen=true; } else g.lineTo(X(s.t),Y(s[k])); prev=s[k]; }
+    g.stroke(); });
+}
+
+function drawBand(c, p, tNow){
+  const [g,w,h]=fit(c), L=34, t0=tNow-WINDOW_S, X=t=>L+(clamp(t,t0,tNow)-t0)/WINDOW_S*(w-L-4), col=css(p.side==="L"?"--left":"--right");
+  g.fillStyle=css("--raised"); g.fillRect(L,8,w-L-4,h-16);
+  let a=null; g.fillStyle=col;
+  for(const s of p.buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ g.fillRect(X(a),8,Math.max(1,X(s.t)-X(a)),h-16); a=null; } }
+  if(a!==null) g.fillRect(X(a),8,Math.max(1,X(tNow)-X(a)),h-16);
+  g.font="10px "+css("--f-mono"); g.textAlign="center"; g.fillStyle=css("--text");
+  for(const e of p.edges){ if(e.t<t0) continue; g.textBaseline=e.down?"bottom":"top"; g.fillText(e.down?"▼":"▲", X(e.t), e.down?9:h-9); }
+}
+
+const SOLE=[[-.5,-.17,0],[.34,-.17,0],[.5,0,0],[.34,.17,0],[-.5,.17,0]], TOP=[[-.5,-.15,.3],[-.1,-.15,.3],[.42,0,.1],[-.1,.15,.3],[-.5,.15,.3]];
+function drawShoe(c, p){
+  const [g,w,h]=fit(c), s=Math.min(w*0.82,h*1.9), az=-0.6, elv=0.35;
+  const P=v=>{ const [x,y,z]=rot(p.q,v), xr=x*Math.cos(az)-y*Math.sin(az), yr=x*Math.sin(az)+y*Math.cos(az);
+    return [w/2+xr*s, h*0.62-(z*Math.cos(elv)+yr*Math.sin(elv))*s]; };
+  g.strokeStyle=css("--line"); g.beginPath(); g.moveTo(8,h*0.62+0.05*s); g.lineTo(w-8,h*0.62+0.05*s); g.stroke();
+  const col=css(p.side==="L"?"--left":"--right"), poly=(pts,fill)=>{ g.beginPath(); pts.map(P).forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y)); g.closePath();
+    if(fill){ g.fillStyle=fill; g.fill(); } g.stroke(); };
+  g.strokeStyle=col; g.lineWidth=1.5; g.lineJoin="round";
+  poly(SOLE,"rgba(255,255,255,.05)"); poly(TOP,"rgba(255,255,255,.07)");
+  g.beginPath(); SOLE.forEach((v,i)=>{ const a=P(v), b=P(TOP[i]); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); }); g.stroke();
+}
+
+/* ---------------- page ---------------- */
+function layout(){
+  const host=el("pods"); host.innerHTML="";
+  for(const p of Object.values(pods)){
+    el("b-"+p.side).textContent=p.dev?"Disconnect "+(p.side==="L"?"left":"right"):"Connect "+(p.side==="L"?"left":"right");
+    el("b-"+p.side).classList.toggle("on",!!p.dev);
+    if(!p.live) continue;
+    const d=document.createElement("div"); d.className="card pod "+p.side; const s=p.side;
+    d.innerHTML=`<div class="top"><span class="name">${LONG[s]}</span><span class="chip" id="chip-${s}"></span></div>
+      <div class="duo"><canvas class="shoe" id="shoe-${s}"></canvas>
+        <div><div class="foot" id="foot-${s}">–</div><div class="what" style="margin:2px 0 0" id="last-${s}">no stride yet</div></div></div>
+      <div class="lab"><b>Acceleration (g)</b><span class="vals" id="acc-${s}"></span></div><canvas class="plot" id="pa-${s}"></canvas>
+      <div class="lab"><b>Angles (°)</b><span class="vals" id="ang-${s}"></span></div><canvas class="plot" id="pg-${s}"></canvas>
+      <div class="lab"><b>Foot on the ground</b><span>▼ landing · ▲ toe-off · last ${WINDOW_S} s</span></div><canvas class="band" id="pb-${s}"></canvas>`;
+    host.appendChild(d);
+  }
+  el("b-demo").textContent=demo.on?"Stop demo":"Demo"; el("b-demo").classList.toggle("on",demo.on);
+}
+const f1=v=>(v>=0?"+":"−")+Math.abs(v).toFixed(2), f0=v=>(v>=0?"+":"−")+Math.abs(v).toFixed(0).padStart(3," ");
+function stats(p){ const S=p.strides; if(S.length<3) return null;
+  const T=S.map(s=>s.contact+s.flight), C=S.map(s=>s.contact), F=S.map(s=>s.flight), m=mean(T);
+  return {stride:m, contact:mean(C), swing:mean(F), duty:100*mean(C)/m, cad:120000/m, cv:100*sd(T)/m, n:p.count}; }
+const ROWS=[["Stride time","stride","ms",0],["Contact time","contact","ms",0],["Swing time","swing","ms",0],
+  ["Contact share of the stride","duty","%",1],["Cadence (both feet)","cad","steps/min",0],["Stride time variability","cv","%",1],["Strides counted","n","",0]];
+function paintTable(){
+  const A=stats(pods.L), B=stats(pods.R);
+  el("tbl").innerHTML=ROWS.map(([name,k,u,dp])=>{
+    const c=x=>x?x[k].toFixed(dp)+(u?" <small>"+u+"</small>":""):"–";
+    let d="–"; if(A&&B&&k!=="n"&&k!=="cad"&&k!=="cv"){ const v=B[k]-A[k]; d=(v>=0?"+":"−")+Math.abs(v).toFixed(dp)+" <small>"+u+(u==="ms"?" · "+(100*Math.abs(v)/((A[k]+B[k])/2)).toFixed(1)+" %":"")+"</small>"; }
+    return `<tr><td>${name}</td><td>${c(A)}</td><td>${c(B)}</td><td>${d}</td></tr>`; }).join("");
+}
+function frame(){
+  const t=frozen?frozenAt:now(), XYZ=[css("--x"),css("--y"),css("--z")];
+  for(const p of Object.values(pods)){
+    if(!p.live || !el("pa-"+p.side)) continue; const s=p.side, c=p.buf[p.buf.length-1];
+    if(!frozen || !p.drawn){
+      drawPlot(el("pa-"+s),p.buf,["ax","ay","az"],XYZ,t,3,""); drawPlot(el("pg-"+s),p.buf,["pitch","roll","yaw"],XYZ,t,60,"");
+      drawBand(el("pb-"+s),p,t); drawShoe(el("shoe-"+s),p); p.drawn=true;
+      if(c){ el("acc-"+s).innerHTML=`<i class="vx">x ${f1(c.ax)}</i><i class="vy">y ${f1(c.ay)}</i><i class="vz">z ${f1(c.az)}</i>`;
+             el("ang-"+s).innerHTML=`<i class="vx">pitch ${f0(c.pitch)}</i><i class="vy">roll ${f0(c.roll)}</i><i class="vz">turn ${f0(c.yaw)}</i>`; }
+      el("foot-"+s).textContent=p.ground===null?"–":(p.ground?"on the ground":"in the air");
+      const k=p.strides[p.strides.length-1];
+      el("last-"+s).textContent=k?`last stride: contact ${k.contact} ms, swing ${k.flight} ms`:"no stride yet";
+      const ch=el("chip-"+s); ch.className="chip "+(p.sim?"sim":"on");
+      ch.textContent=p.sim?"simulated":(p.init?"starting, keep still":(p.rate?p.rate+" Hz":"connected")+(p.vbat?" · "+(p.vbat/1000).toFixed(2)+" V":""));
+    }
+  }
+  if(!frozen) paintTable();
+  requestAnimationFrame(frame);
+}
+el("b-L").onclick=()=>connect("L"); el("b-R").onclick=()=>connect("R"); el("b-zero").onclick=zero;
+el("b-demo").onclick=()=>demo.on?stopDemo():startDemo();
+el("b-clear").onclick=()=>{ for(const p of Object.values(pods)){ p.strides=[]; p.count=0; } note("Timing numbers cleared."); };
+el("b-freeze").onclick=()=>{ frozen=!frozen; frozenAt=now(); for(const p of Object.values(pods)) p.drawn=false;
+  el("b-freeze").textContent=frozen?"Resume":"Freeze"; el("b-freeze").classList.toggle("on",frozen); };
+layout(); paintTable(); requestAnimationFrame(frame);
+if(location.hash==="#demo") startDemo();
+</script>
+</body>
+</html>

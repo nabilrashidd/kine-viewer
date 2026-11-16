@@ -65,6 +65,17 @@ canvas{display:block;width:100%;height:min(62vh,560px);touch-action:none}
 details{margin-top:12px;color:var(--muted);font-size:13px}
 details summary{cursor:pointer;color:var(--text)}
 details p{margin:6px 0}
+.raw{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+.raw h3{font-family:var(--f-display);font-size:14px;margin:0 0 2px} .raw .L h3{color:var(--left)} .raw .R h3{color:var(--right)}
+.raw canvas{height:110px;touch-action:auto} .raw canvas.band{height:30px}
+.lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:8px;font-size:12px;color:var(--muted)}
+.lab b{font-weight:500;color:var(--text)} .vals{font-family:var(--f-mono);font-size:12px;white-space:nowrap} .vals i{font-style:normal;margin-left:7px}
+.vx{color:#FF6B6B} .vy{color:#5BD68A} .vz{color:#5BA8FF}
+table.tim{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+.tim th,.tim td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--line)}
+.tim th{font-weight:500;color:var(--muted);font-size:12px} .tim th:first-child,.tim td:first-child{text-align:left}
+.tim td{font-family:var(--f-mono)} .tim td:first-child{font-family:var(--f-body)} .tim small{color:var(--dim);font-size:11px}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
 .log{font-family:var(--f-mono);font-size:11px;color:var(--dim);max-height:110px;overflow:auto;white-space:pre-wrap;margin-top:6px}
 </style>
 </head>
@@ -105,6 +116,7 @@ details p{margin:6px 0}
           <button class="btn" id="b-mark" disabled>Mark both</button>
           <button class="btn" id="b-stop" disabled>Stop recording</button>
           <button class="btn" id="b-reset">Reset path</button>
+          <button class="btn danger" id="b-erase" disabled>Erase pod memory</button>
           <button class="btn" id="b-demo">Demo: two simulated pods</button>
         </div>
         <div class="note" id="note">Connect a pod, or run the demo. Stand still with both feet parallel, then Zero both before walking.</div>
@@ -115,6 +127,25 @@ details p{margin:6px 0}
           <p>Two pods each have their own heading, and both drift slowly. The model assumes what a walking person does: both feet travel the same way on average, the left foot stays left of the right one, about hip-width apart, and one foot is never more than about a stride ahead of the other. When a landing breaks one of these, both feet are nudged half each, and the nudge is shown above so it can't hide anything.</p>
           <p>Step width is not shown: the sideways part of each stride has a few centimetres of error, and summed over many strides it wanders, so the drawing holds the feet at a normal hip width instead. Stride length, contact and flight time, cadence and symmetry are each pod's own measurements.</p>
           <p>For this to line up, Zero both pods while standing still with the feet parallel. Strides from FREE (in-hand) mode or strides a pod could not track are not used.</p>
+        </details>
+      </div>
+
+      <div class="card both">
+        <h2>Raw values and timing</h2>
+        <div class="raw">
+          <div class="L" id="raw-L" hidden><h3>Left foot</h3>
+            <div class="lab"><b>Acceleration (g)</b><span class="vals" id="acc-L"></span></div><canvas id="pa-L"></canvas>
+            <div class="lab"><b>Angles (°)</b><span class="vals" id="ang-L"></span></div><canvas id="pg-L"></canvas>
+            <div class="lab"><b>Foot on the ground</b><span>▼ landing · ▲ toe-off</span></div><canvas class="band" id="pb-L"></canvas></div>
+          <div class="R" id="raw-R" hidden><h3>Right foot</h3>
+            <div class="lab"><b>Acceleration (g)</b><span class="vals" id="acc-R"></span></div><canvas id="pa-R"></canvas>
+            <div class="lab"><b>Angles (°)</b><span class="vals" id="ang-R"></span></div><canvas id="pg-R"></canvas>
+            <div class="lab"><b>Foot on the ground</b><span>▼ landing · ▲ toe-off</span></div><canvas class="band" id="pb-R"></canvas></div>
+        </div>
+        <table class="tim"><thead><tr><th>last 20 strides</th><th style="color:var(--left)">left</th><th style="color:var(--right)">right</th><th>right − left</th></tr></thead><tbody id="tim"></tbody></table>
+        <details><summary>What these are</summary>
+          <p>The plots show the last 8 seconds of what each pod sends 50 times a second: acceleration along its x, y and z axes, and its pitch (toe up / down), roll and turn. Grey bands mark when the pod says the foot is on the ground.</p>
+          <p>Contact time is landing to toe-off, swing time is toe-off to the next landing, and stride time is landing to the next landing of the same foot. Variability is the spread of the stride time as a share of its mean. These come from the pod's own step detection, which still misses steps on a treadmill; its toe-off has not been checked against a ground truth yet.</p>
         </details>
       </div>
     </div>
@@ -156,6 +187,7 @@ const PAIR_WINDOW_MS=3000;                // the other foot's landing must be th
    firmware can cycle stance (9 Nov: clearance 0 mm on all 16 such strides,
    42-165 mm on every real step) */
 const NO_LIFT_MM=15;
+const RAW_S=8;                              // seconds shown in the raw plots
 
 const R2D=180/Math.PI, D2R=Math.PI/180;
 const el=id=>document.getElementById(id);
@@ -177,7 +209,7 @@ class Pod{
     this.rate=0; this.vbat=0; this.mode=""; this.chip="";
     this.strides=[]; this.used=0; this.skipped=0; this.mic={ok:0,no:0,deaf:0};
     this.lastStride=null; this.swing=null; this.queue=Promise.resolve(); this.nusBuf="";
-    this.noLift=0;
+    this.noLift=0; this.acc=[0,0,1]; this.buf=[]; this.edges=[];
     this.rec=null;           // a streamed recording coming in (survives reconnects)
     this.recAsk=null;        // "KB of old sessions on the flash": waiting for the user's yes
     this.podBehindKb=null;   // what the pod still holds unconfirmed
@@ -188,6 +220,13 @@ class Pod{
     this.heading=null; this.rawHeading=undefined; this.lastVec=null; this.lastLandMs=0; this.swing=null;
   }
   get live(){ return !!this.dev || this.sim; }
+  sample(t){                                    // one 50 Hz row for the raw plots
+    const [w,x,y,z]=this.q;
+    this.buf.push({t, ax:this.acc[0], ay:this.acc[1], az:this.acc[2], pitch:pitchOf(this.q),
+                   roll:Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y))*R2D, yaw:yawOf(this.q)*R2D, g:this.ground});
+    while(this.buf.length && this.buf[0].t<t-RAW_S-1) this.buf.shift();
+    while(this.edges.length && this.edges[0].t<t-RAW_S-1) this.edges.shift();
+  }
 }
 const pods={L:new Pod("L"), R:new Pod("R")};
 
@@ -293,10 +332,13 @@ function onLive(pod, d){
     const fl=pod.lastStride ? pod.lastStride.flight : 0;
     pod.swing={t0:performance.now(), dur: fl>100 && fl<2000 ? fl : 450};
   }
+  if(pod.ground!==ground) pod.edges.push({t:performance.now()/1000, down:ground});
   pod.ground=ground;
 }
 function onMotion(pod, d){
   pod.q=[d.getInt16(0,true)/10000, d.getInt16(2,true)/10000, d.getInt16(4,true)/10000, d.getInt16(6,true)/10000];
+  pod.acc=[d.getInt16(8,true)/1000, d.getInt16(10,true)/1000, d.getInt16(12,true)/1000];
+  pod.sample(performance.now()/1000);
 }
 function onStatus(pod, d){
   pod.init=(d.getUint8(1)&1)!==0; pod.rate=d.getUint16(2,true); pod.vbat=d.getUint16(4,true);
@@ -504,6 +546,9 @@ function recLine(pod, line){
   if(/^# rec flash session \d+ started/.test(line)){ pod.flashRec=true; note(who+" pod is recording on its flash."+(pods.L.flashRec&&pods.R.flashRec?" Both are recording.":""),"ok"); return; }
   if(/^# rec flash session \d+ saved/.test(line)){ pod.flashRec=false; note(who+" pod saved its recording: "+line.replace(/^# rec flash session \d+ saved: /,""),"ok"); return; }
   if(/^# rec: (flash full|flash chip|256 sessions|flash busy|the flash holds)/.test(line)){ pod.flashRec=false; note(who+" pod is NOT recording: "+line.slice(7),"bad"); return; }
+  if(/^# erasing the flash/.test(line)){ note(who+" pod is erasing its memory…","warn"); return; }
+  if(/^# flash erased/.test(line)){ pod.flashRec=false; note(who+" pod: memory erased, ready to record.","ok"); return; }
+  if(/^# rec: (busy|no flash)/.test(line)){ note(who+" pod did not erase: "+(/busy/.test(line)?"it is recording or downloading. Stop the recording first.":"no flash chip."),"bad"); return; }
   if((m=line.match(/^# rec: (\d+) KB of old sessions/))){ pod.recAsk={kb:+m[1]}; paint(); return; }
   if(/^# rec stream session \d+ started/.test(line)){ pod.recAsk=null; return; }
   if((m=line.match(/^# stream: written (\d+) KB, sent (\d+) KB, confirmed (\d+) KB, behind (\d+) KB/))){ pod.podBehindKb=+m[4]; return; }
@@ -548,7 +593,12 @@ function demoStep(now){
   for(const side of ["L","R"]){
     const p=pods[side], tl=demo.next[side];
     const yawRaw=demoBody(demo.t).h+demo.drift[side]*demo.t;
-    p.q=[Math.cos(yawRaw/2),0,0,Math.sin(yawRaw/2)];
+    const u=(demo.t-(tl-demo.T))/demo.T, cf=demo.contact/demo.T, sw=u<cf?0:(u-cf)/(1-cf);   // stride phase from the landing
+    const pit=(u<cf ? -55*Math.pow(Math.max(0,(u/cf-0.6)/0.4),2) : -55*Math.cos(sw*Math.PI))*D2R, th=-pit;
+    p.q=[Math.cos(yawRaw/2)*Math.cos(th/2), -Math.sin(yawRaw/2)*Math.sin(th/2), Math.cos(yawRaw/2)*Math.sin(th/2), Math.sin(yawRaw/2)*Math.cos(th/2)];
+    const nz=()=>(Math.random()-0.5)*0.04, hit=u>=0&&u<0.03 ? 3.2*Math.sin(u/0.03*Math.PI) : 0;
+    p.acc=[(u<cf?0:1.6*Math.sin(sw*2*Math.PI))+Math.sin(pit)+nz(), 0.15*Math.sin(u*4*Math.PI)+nz(), Math.cos(pit)+hit+(u<cf?0:0.5*Math.cos(sw*2*Math.PI))+nz()];
+    p.sample(now/1000);
     if(p.ground && demo.t>tl-demo.T+demo.contact && demo.t<tl){
       onLive(p,new DataView(new Uint8Array([0,0,0,0,0,0,0,0,0,0]).buffer));
     }
@@ -636,6 +686,65 @@ function draw(now){
   el("scale-label").textContent="grid 1 m";
 }
 
+/* ---------------- raw plots and timing table ---------------- */
+const XYZ=["#FF6B6B","#5BD68A","#5BA8FF"];
+function fitCanvas(c){ const r=window.devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight;
+  if(c.width!==Math.round(w*r) || c.height!==Math.round(h*r)){ c.width=Math.round(w*r); c.height=Math.round(h*r); }
+  const g=c.getContext("2d"); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,w,h); return [g,w,h]; }
+function stanceSpans(buf,t0,tNow,fn){ let a=null;
+  for(const s of buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ fn(a,s.t); a=null; } }
+  if(a!==null) fn(a,tNow); }
+function drawPlot(c, buf, keys, tNow, minSpan){
+  const [g,w,h]=fitCanvas(c), L=30, T=5, B=h-5, t0=tNow-RAW_S;
+  let lo=Infinity, hi=-Infinity;
+  for(const s of buf) if(s.t>=t0) for(const k of keys){ if(s[k]<lo) lo=s[k]; if(s[k]>hi) hi=s[k]; }
+  if(!isFinite(lo)){ lo=-1; hi=1; }
+  const mid=(lo+hi)/2, span=Math.max(minSpan,(hi-lo)*1.15); lo=mid-span/2; hi=mid+span/2;
+  const X=t=>L+(t-t0)/RAW_S*(w-L-4), Y=v=>B-(v-lo)/(hi-lo)*(B-T);
+  g.font="10px Menlo,Consolas,monospace"; g.textBaseline="middle"; g.textAlign="right"; g.lineWidth=1;
+  const step=[0.5,1,2,5,10,20,45,90,180].find(s=>span/s<=4)||360;
+  for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step){ g.strokeStyle="#2A3340"; g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(w-4,Y(v)); g.stroke();
+    g.fillStyle="#5F6B7C"; g.fillText(String(Math.abs(v)<1e-9?0:+v.toFixed(1)),L-4,Y(v)); }
+  g.fillStyle="rgba(255,255,255,.045)"; stanceSpans(buf,t0,tNow,(a,b)=>g.fillRect(X(a),T,X(b)-X(a),B-T));
+  g.lineWidth=1.5; g.lineJoin="round";
+  keys.forEach((k,i)=>{ g.strokeStyle=XYZ[i]; g.beginPath(); let pen=false, prev=null;
+    for(const s of buf){ if(s.t<t0) continue; const jump=prev!==null && Math.abs(s[k]-prev)>300;      // turn wraps at 180
+      if(!pen||jump){ g.moveTo(X(s.t),Y(s[k])); pen=true; } else g.lineTo(X(s.t),Y(s[k])); prev=s[k]; }
+    g.stroke(); });
+}
+function drawBand(c, p, tNow){
+  const [g,w,h]=fitCanvas(c), L=30, t0=tNow-RAW_S, X=t=>L+(clamp(t,t0,tNow)-t0)/RAW_S*(w-L-4);
+  g.fillStyle="#232B36"; g.fillRect(L,7,w-L-4,h-14);
+  g.fillStyle=p.side==="L"?"#4EA8FF":"#FF8A3D"; stanceSpans(p.buf,t0,tNow,(a,b)=>g.fillRect(X(a),7,Math.max(1,X(b)-X(a)),h-14));
+  g.font="9px Menlo,Consolas,monospace"; g.textAlign="center"; g.fillStyle="#E6EAF1";
+  for(const e of p.edges){ if(e.t<t0) continue; g.textBaseline=e.down?"bottom":"top"; g.fillText(e.down?"▼":"▲", X(e.t), e.down?8:h-8); }
+}
+function drawRaw(now){
+  const t=now/1000, sg=(v,d,n)=>(v>=0?"+":"−")+Math.abs(v).toFixed(d).padStart(n," ");
+  for(const p of Object.values(pods)){
+    const box=el("raw-"+p.side); if(box.hidden===p.live) box.hidden=!p.live;
+    if(!p.live) continue; const s=p.side, c=p.buf[p.buf.length-1];
+    drawPlot(el("pa-"+s),p.buf,["ax","ay","az"],t,3); drawPlot(el("pg-"+s),p.buf,["pitch","roll","yaw"],t,60); drawBand(el("pb-"+s),p,t);
+    if(c){ el("acc-"+s).innerHTML=`<i class="vx">x ${sg(c.ax,2,4)}</i><i class="vy">y ${sg(c.ay,2,4)}</i><i class="vz">z ${sg(c.az,2,4)}</i>`;
+           el("ang-"+s).innerHTML=`<i class="vx">pitch ${sg(c.pitch,0,3)}</i><i class="vy">roll ${sg(c.roll,0,3)}</i><i class="vz">turn ${sg(c.yaw,0,3)}</i>`; }
+  }
+}
+function timing(p){
+  const S=p.strides.filter(x=>x.valid&&!x.bench&&!x.abandoned&&x.peak>=NO_LIFT_MM&&x.contact+x.flight>300&&x.contact+x.flight<3000).slice(-20);
+  if(S.length<3) return null;
+  const T=S.map(x=>x.contact+x.flight), mean=a=>a.reduce((u,v)=>u+v,0)/a.length, m=mean(T), C=mean(S.map(x=>x.contact));
+  return {stride:m, contact:C, swing:m-C, duty:100*C/m, cad:120000/m, cv:100*Math.sqrt(mean(T.map(v=>(v-m)*(v-m))))/m, n:S.length};
+}
+const TIM_ROWS=[["Stride time","stride","ms",0,1],["Contact time","contact","ms",0,1],["Swing time","swing","ms",0,1],
+  ["Contact share of the stride","duty","%",1,1],["Cadence (both feet)","cad","steps/min",0,0],["Stride time variability","cv","%",1,0],["Strides in the average","n","",0,0]];
+function paintTiming(){
+  const A=timing(pods.L), B=timing(pods.R);
+  el("tim").innerHTML=TIM_ROWS.map(([name,k,u,dp,diff])=>{
+    const c=x=>x?x[k].toFixed(dp)+(u?" <small>"+u+"</small>":""):"–";
+    let d="–"; if(A&&B&&diff){ const v=B[k]-A[k]; d=(v>=0?"+":"−")+Math.abs(v).toFixed(dp)+" <small>"+u+(u==="ms"?" · "+(100*Math.abs(v)/((A[k]+B[k])/2)).toFixed(1)+" %":"")+"</small>"; }
+    return `<tr><td>${name}</td><td>${c(A)}</td><td>${c(B)}</td><td>${d}</td></tr>`; }).join("");
+}
+
 /* ---------------- panels ---------------- */
 function podCard(p){
   const s=p.lastStride, last6=p.strides.filter(x=>x.valid&&!x.bench).slice(-6);
@@ -665,7 +774,7 @@ let lastPaint=0;
 function paint(){
   for(const s of ["L","R"]) el("pod-"+s).innerHTML=podCard(pods[s]);
   const anyDev=!!(pods.L.dev||pods.R.dev);
-  for(const id of ["b-zero","b-auto","b-rec","b-recpod","b-mark","b-stop"]) el(id).disabled=!anyDev;
+  for(const id of ["b-zero","b-auto","b-rec","b-recpod","b-mark","b-stop","b-erase"]) el(id).disabled=!anyDev;
   el("b-demo").textContent=demo.on?"Stop demo":"Demo: two simulated pods";
   // both-feet numbers
   const now=performance.now(), land=model.landings;
@@ -683,6 +792,7 @@ function paint(){
   el("s-dist").textContent=model.dist.toFixed(1);
   el("s-drift").textContent=(pods.L.live&&pods.R.live)?(model.drift*R2D).toFixed(1)+"°":"–";
   el("s-fix").textContent=(pods.L.live&&pods.R.live&&model.prints.length)?model.lastFixCm.toFixed(1):"–";
+  paintTiming();
 }
 document.addEventListener("click",e=>{
   const b=e.target.closest("[data-connect]"); if(b) connect(b.dataset.connect);
@@ -698,6 +808,14 @@ el("b-rec").addEventListener("click",()=>{ recStartAll(); });
 el("b-recpod").addEventListener("click",()=>{ forBoth(p=>{ sendText(p,"Re0"); sendText(p,"Rf"); }); note("Recording on the pods' own flash (about 6 min). Pull them over USB afterwards.","ok"); });
 el("b-mark").addEventListener("click",()=>{ forBoth(p=>sendText(p,"Rm")); log("mark sent to both"); });
 el("b-stop").addEventListener("click",()=>{ forBoth(p=>{ if(!p.rec) sendText(p,"Rf0"); }); recStopAll(); });
+/* RE wipes every recording on the pod's flash; it cannot be undone, so ask first */
+el("b-erase").addEventListener("click",()=>{
+  const who=Object.values(pods).filter(p=>p.dev).map(p=>p.side==="L"?"left":"right");
+  if(!who.length) return;
+  if(Object.values(pods).some(p=>p.dev&&(p.rec||p.flashRec))) return note("A pod is recording. Stop the recording first, then erase.","warn");
+  if(!confirm("Erase ALL recordings stored on the "+who.join(" and ")+" pod"+(who.length>1?"s":"")+"?\n\nRecordings that were not downloaded are lost for good.")) return;
+  forBoth(p=>sendText(p,"RE")); note("Erase sent. Wait for each pod to say its memory is erased.","warn");
+});
 el("b-reset").addEventListener("click",()=>{ model.reset(); paint(); });
 el("b-demo").addEventListener("click",()=>{ demo.on?stopDemo():startDemo(); });
 
@@ -719,11 +837,12 @@ window.addEventListener("resize",resize);
 resize(); paint();
 function frame(now){
   if(demo.on) demoStep(now);
-  draw(now);
+  draw(now); drawRaw(now);
   if(now-lastPaint>250){ lastPaint=now; paint(); }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+if(location.hash==="#demo") startDemo();
 </script>
 </body>
 </html>

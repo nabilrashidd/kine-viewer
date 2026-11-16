@@ -88,8 +88,8 @@ th.l{color:var(--left)} th.r{color:var(--right)}
   </table>
   <p class="what"><b>Landing</b> = the foot touches the ground. <b>Toe-off</b> = it leaves. <b>Contact time</b> = landing to toe-off.
   <b>Swing time</b> = toe-off to the next landing. <b>Stride time</b> = landing to the next landing of the same foot.
-  <b>Variability</b> = spread of the stride time, as a share of its mean. Numbers come from the pod's own step detection, which still
-  misses steps on a treadmill and has not been checked for toe-off. Raw values arrive 50 times a second.</p>
+  <b>Variability</b> = spread of the stride time, as a share of its mean. With current firmware the numbers come from the pod's rhythm step finder, which works without the foot standing still
+  (checked on the PC against video: ~10 ms in walking; toe-off while jogging is weak). Older firmware falls back to its rest-based strides, which miss treadmill steps. Raw values arrive 50 times a second.</p>
 </div>
 
 <div class="card"><h2>Log</h2><pre id="log"></pre></div>
@@ -99,7 +99,7 @@ th.l{color:var(--left)} th.r{color:var(--right)}
 "use strict";
 const SVC="f5a30001-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const chr=n=>"f5a3000"+n+"-7b4a-4b5c-9a2e-2f6b1d0c8e10";
-const CHR_MOTION=chr(2), CHR_STATUS=chr(3), CHR_CMD=chr(4), CHR_STRIDE=chr(8), CHR_LIVE=chr(9);
+const CHR_MOTION=chr(2), CHR_STATUS=chr(3), CHR_CMD=chr(4), CHR_STRIDE=chr(8), CHR_LIVE=chr(9), CHR_STEPS="f5a3000b-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CMD_ZERO=1;
 const NAMES={L:"Kine-Left",R:"Kine-Right"}, LONG={L:"Left foot",R:"Right foot"};
 const WINDOW_S=8, KEEP=20, NO_LIFT_MM=15;       // a "stride" whose foot never lifted is not a step
@@ -128,7 +128,7 @@ function rot(q,v){                               // rotate v by q
 class Pod{
   constructor(side){ this.side=side; this.dev=null; this.cmd=null; this.sim=false; this.queue=Promise.resolve(); this.reset(); }
   reset(){ this.buf=[]; this.q=[1,0,0,0]; this.acc=[0,0,1]; this.ground=null; this.edges=[]; this.strides=[]; this.count=0;
-           this.rate=0; this.vbat=0; this.init=false; }
+           this.rate=0; this.vbat=0; this.init=false; this.rhythm=false; this.rsteps=[]; this.rspans=[]; this.redges=[]; this.rland=0; }
   get live(){ return !!this.dev || this.sim; }
   sample(t){ const a=angles(this.q);
     this.buf.push({t, ax:this.acc[0], ay:this.acc[1], az:this.acc[2], pitch:a.pitch, roll:a.roll, yaw:a.yaw, g:this.ground});
@@ -144,6 +144,29 @@ let frozen=false, frozenAt=0;
 const now=()=>performance.now()/1000;
 
 /* ---------------- packets ---------------- */
+const RAW_S=WINDOW_S;
+/* steps from the firmware's rhythm step finder (0x0B, 12 bytes): u16 steps,
+   u16 contact ms (0 = unknown), u16 swing ms, u16 stride ms, u16 age ms (landing
+   to now), u8 flags (bit0 contact known). It needs no "foot at rest", so it also
+   works on a treadmill. Times are rebuilt from the age. */
+function onSteps(pod, d){
+  const tn=now(), contact=d.getUint16(2,true), swing=d.getUint16(4,true), stride=d.getUint16(6,true);
+  const land=tn-d.getUint16(8,true)/1000, to=land-swing/1000, haveC=(d.getUint8(10)&1)!==0;
+  pod.rhythm=true;
+  pod.rsteps.push({contact, swing, stride, haveC}); if(pod.rsteps.length>40) pod.rsteps.shift();
+  if(haveC) pod.rspans.push({a:to-contact/1000, b:to});
+  pod.redges.push({t:to, down:false}, {t:land, down:true}); pod.rland=land;
+  const old=tn-RAW_S-2; while(pod.rspans.length && pod.rspans[0].b<old) pod.rspans.shift(); while(pod.redges.length && pod.redges[0].t<old) pod.redges.shift();
+}
+/* stance spans for the plots: from the rhythm steps when the pod sends them
+   (the open stance since the last landing included), else the pod's ground flag */
+function spansOf(p,t0,tNow,fn){
+  if(p.rhythm){ for(const r of p.rspans) if(r.b>=t0) fn(Math.max(r.a,t0),r.b);
+    const lastTo=p.redges.length?p.redges.filter(e=>!e.down).slice(-1)[0]:null;
+    if(p.rland && (!lastTo || p.rland>lastTo.t) && tNow-p.rland<3) fn(Math.max(p.rland,t0),tNow); return; }
+  let a=null; for(const s of p.buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ fn(a,s.t); a=null; } }
+  if(a!==null) fn(a,tNow);
+}
 function onMotion(p,d){
   p.q=[0,2,4,6].map(i=>d.getInt16(i,true)/10000);
   p.acc=[8,10,12].map(i=>d.getInt16(i,true)/1000);
@@ -170,6 +193,7 @@ async function connect(side){
       c.addEventListener("characteristicvaluechanged",e=>fn(p,e.target.value)); return c; }catch(e){ return null; } };
     try{ p.cmd=await svc.getCharacteristic(CHR_CMD); }catch(e){ p.cmd=null; }
     await sub(CHR_MOTION,onMotion); await sub(CHR_STATUS,onStatus); await sub(CHR_LIVE,onLive);
+    await sub(CHR_STEPS,onSteps);
     if(!await sub(CHR_STRIDE,onStride)) log(side+": this firmware sends no strides - flash the current pod firmware");
     log(side+": connected to "+dev.name); note(NAMES[side]+" connected. Stand still, then press Zero angles.","ok");
   }catch(e){ p.dev=null; note(/cancel/i.test(e.message)?"No pod chosen.":"Could not connect "+NAMES[side]+": "+e.message,"bad"); }
@@ -209,7 +233,7 @@ function fit(c){ const r=window.devicePixelRatio||1, w=c.clientWidth, h=c.client
   if(c.width!==Math.round(w*r) || c.height!==Math.round(h*r)){ c.width=Math.round(w*r); c.height=Math.round(h*r); }
   const g=c.getContext("2d"); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,w,h); return [g,w,h]; }
 
-function drawPlot(c, buf, keys, cols, tNow, minSpan, unit){
+function drawPlot(c, pod, keys, cols, tNow, minSpan, unit){ const buf=pod.buf;
   const [g,w,h]=fit(c), L=34, T=6, B=h-6, t0=tNow-WINDOW_S;
   let lo=Infinity, hi=-Infinity;
   for(const s of buf) if(s.t>=t0) for(const k of keys){ if(s[k]<lo) lo=s[k]; if(s[k]>hi) hi=s[k]; }
@@ -221,8 +245,7 @@ function drawPlot(c, buf, keys, cols, tNow, minSpan, unit){
   for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step){ g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(w-4,Y(v)); g.stroke();
     g.textAlign="right"; g.fillText((Math.abs(v)<1e-9?0:+v.toFixed(1))+unit,L-4,Y(v)); }
   g.fillStyle="rgba(255,255,255,.045)";                    // shade where the foot is on the ground
-  let a=null; for(const s of buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ g.fillRect(X(a),T,X(s.t)-X(a),B-T); a=null; } }
-  if(a!==null) g.fillRect(X(a),T,X(tNow)-X(a),B-T);
+  spansOf(pod,t0,tNow,(a,b)=>g.fillRect(X(a),T,X(b)-X(a),B-T));
   g.lineWidth=1.5; g.lineJoin="round";
   keys.forEach((k,i)=>{ g.strokeStyle=cols[i]; g.beginPath(); let pen=false, prev=null;
     for(const s of buf){ if(s.t<t0) continue; const jump=prev!==null && Math.abs(s[k]-prev)>300;   // yaw wrap
@@ -233,11 +256,9 @@ function drawPlot(c, buf, keys, cols, tNow, minSpan, unit){
 function drawBand(c, p, tNow){
   const [g,w,h]=fit(c), L=34, t0=tNow-WINDOW_S, X=t=>L+(clamp(t,t0,tNow)-t0)/WINDOW_S*(w-L-4), col=css(p.side==="L"?"--left":"--right");
   g.fillStyle=css("--raised"); g.fillRect(L,8,w-L-4,h-16);
-  let a=null; g.fillStyle=col;
-  for(const s of p.buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ g.fillRect(X(a),8,Math.max(1,X(s.t)-X(a)),h-16); a=null; } }
-  if(a!==null) g.fillRect(X(a),8,Math.max(1,X(tNow)-X(a)),h-16);
+  g.fillStyle=col; spansOf(p,t0,tNow,(a,b)=>g.fillRect(X(a),8,Math.max(1,X(b)-X(a)),h-16));
   g.font="10px "+css("--f-mono"); g.textAlign="center"; g.fillStyle=css("--text");
-  for(const e of p.edges){ if(e.t<t0) continue; g.textBaseline=e.down?"bottom":"top"; g.fillText(e.down?"▼":"▲", X(e.t), e.down?9:h-9); }
+  for(const e of (p.rhythm?p.redges:p.edges)){ if(e.t<t0) continue; g.textBaseline=e.down?"bottom":"top"; g.fillText(e.down?"▼":"▲", X(e.t), e.down?9:h-9); }
 }
 
 const SOLE=[[-.5,-.17,0],[.34,-.17,0],[.5,0,0],[.34,.17,0],[-.5,.17,0]], TOP=[[-.5,-.15,.3],[-.1,-.15,.3],[.42,0,.1],[-.1,.15,.3],[-.5,.15,.3]];
@@ -272,7 +293,11 @@ function layout(){
   el("b-demo").textContent=demo.on?"Stop demo":"Demo"; el("b-demo").classList.toggle("on",demo.on);
 }
 const f1=v=>(v>=0?"+":"−")+Math.abs(v).toFixed(2), f0=v=>(v>=0?"+":"−")+Math.abs(v).toFixed(0).padStart(3," ");
-function stats(p){ const S=p.strides; if(S.length<3) return null;
+function stats(p){
+  if(p.rhythm){ const R=p.rsteps.slice(-KEEP), T=R.map(x=>x.stride).filter(v=>v>300&&v<3000), C=R.filter(x=>x.haveC).map(x=>x.contact);
+    if(T.length<3) return null; const m=mean(T), c=C.length?mean(C):NaN;
+    return {stride:m, contact:c, swing:mean(R.map(x=>x.swing)), duty:100*c/m, cad:120000/m, cv:100*sd(T)/m, n:p.rsteps.length}; }
+  const S=p.strides; if(S.length<3) return null;
   const T=S.map(s=>s.contact+s.flight), C=S.map(s=>s.contact), F=S.map(s=>s.flight), m=mean(T);
   return {stride:m, contact:mean(C), swing:mean(F), duty:100*mean(C)/m, cad:120000/m, cv:100*sd(T)/m, n:p.count}; }
 const ROWS=[["Stride time","stride","ms",0],["Contact time","contact","ms",0],["Swing time","swing","ms",0],
@@ -280,8 +305,8 @@ const ROWS=[["Stride time","stride","ms",0],["Contact time","contact","ms",0],["
 function paintTable(){
   const A=stats(pods.L), B=stats(pods.R);
   el("tbl").innerHTML=ROWS.map(([name,k,u,dp])=>{
-    const c=x=>x?x[k].toFixed(dp)+(u?" <small>"+u+"</small>":""):"–";
-    let d="–"; if(A&&B&&k!=="n"&&k!=="cad"&&k!=="cv"){ const v=B[k]-A[k]; d=(v>=0?"+":"−")+Math.abs(v).toFixed(dp)+" <small>"+u+(u==="ms"?" · "+(100*Math.abs(v)/((A[k]+B[k])/2)).toFixed(1)+" %":"")+"</small>"; }
+    const c=x=>x&&isFinite(x[k])?x[k].toFixed(dp)+(u?" <small>"+u+"</small>":""):"–";
+    let d="–"; if(A&&B&&isFinite(A[k])&&isFinite(B[k])&&k!=="n"&&k!=="cad"&&k!=="cv"){ const v=B[k]-A[k]; d=(v>=0?"+":"−")+Math.abs(v).toFixed(dp)+" <small>"+u+(u==="ms"?" · "+(100*Math.abs(v)/((A[k]+B[k])/2)).toFixed(1)+" %":"")+"</small>"; }
     return `<tr><td>${name}</td><td>${c(A)}</td><td>${c(B)}</td><td>${d}</td></tr>`; }).join("");
 }
 function frame(){
@@ -289,7 +314,7 @@ function frame(){
   for(const p of Object.values(pods)){
     if(!p.live || !el("pa-"+p.side)) continue; const s=p.side, c=p.buf[p.buf.length-1];
     if(!frozen || !p.drawn){
-      drawPlot(el("pa-"+s),p.buf,["ax","ay","az"],XYZ,t,3,""); drawPlot(el("pg-"+s),p.buf,["pitch","roll","yaw"],XYZ,t,60,"");
+      drawPlot(el("pa-"+s),p,["ax","ay","az"],XYZ,t,3,""); drawPlot(el("pg-"+s),p,["pitch","roll","yaw"],XYZ,t,60,"");
       drawBand(el("pb-"+s),p,t); drawShoe(el("shoe-"+s),p); p.drawn=true;
       if(c){ el("acc-"+s).innerHTML=`<i class="vx">x ${f1(c.ax)}</i><i class="vy">y ${f1(c.ay)}</i><i class="vz">z ${f1(c.az)}</i>`;
              el("ang-"+s).innerHTML=`<i class="vx">pitch ${f0(c.pitch)}</i><i class="vy">roll ${f0(c.roll)}</i><i class="vz">turn ${f0(c.yaw)}</i>`; }

@@ -142,10 +142,10 @@ table.tim{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
             <div class="lab"><b>Angles (°)</b><span class="vals" id="ang-R"></span></div><canvas id="pg-R"></canvas>
             <div class="lab"><b>Foot on the ground</b><span>▼ landing · ▲ toe-off</span></div><canvas class="band" id="pb-R"></canvas></div>
         </div>
-        <table class="tim"><thead><tr><th>last 20 strides</th><th style="color:var(--left)">left</th><th style="color:var(--right)">right</th><th>right − left</th></tr></thead><tbody id="tim"></tbody></table>
+        <table class="tim"><thead><tr><th id="tim-src">last 20 strides</th><th style="color:var(--left)">left</th><th style="color:var(--right)">right</th><th>right − left</th></tr></thead><tbody id="tim"></tbody></table>
         <details><summary>What these are</summary>
           <p>The plots show the last 8 seconds of what each pod sends 50 times a second: acceleration along its x, y and z axes, and its pitch (toe up / down), roll and turn. Grey bands mark when the pod says the foot is on the ground.</p>
-          <p>Contact time is landing to toe-off, swing time is toe-off to the next landing, and stride time is landing to the next landing of the same foot. Variability is the spread of the stride time as a share of its mean. These come from the pod's own step detection, which still misses steps on a treadmill; its toe-off has not been checked against a ground truth yet.</p>
+          <p>With current firmware the timing and the ground band come from the pod's rhythm step finder, which does not need the foot to stand still, so it also works on a treadmill (checked on the PC against video: landings ~10 ms, toe-offs ~10 ms in walking; toe-off while jogging is weak). Contact time is landing to toe-off, swing time is toe-off to the next landing, and stride time is landing to the next landing of the same foot. Variability is the spread of the stride time as a share of its mean. Older firmware sends only its rest-based strides, which miss most steps on a treadmill.</p>
         </details>
       </div>
     </div>
@@ -170,6 +170,7 @@ const CHR_CMD="f5a30004-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CHR_STRIDE="f5a30008-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CHR_LIVE="f5a30009-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const CHR_REC="f5a3000a-7b4a-4b5c-9a2e-2f6b1d0c8e10";
+const CHR_STEPS="f5a3000b-7b4a-4b5c-9a2e-2f6b1d0c8e10";
 const NUS="6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_RX="6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NUS_TX="6e400003-b5a3-f393-e0a9-e50e24dcca9e";
@@ -210,6 +211,7 @@ class Pod{
     this.strides=[]; this.used=0; this.skipped=0; this.mic={ok:0,no:0,deaf:0};
     this.lastStride=null; this.swing=null; this.queue=Promise.resolve(); this.nusBuf="";
     this.noLift=0; this.acc=[0,0,1]; this.buf=[]; this.edges=[];
+    this.rhythm=false; this.rsteps=[]; this.rspans=[]; this.redges=[]; this.rland=0;
     this.rec=null;           // a streamed recording coming in (survives reconnects)
     this.recAsk=null;        // "KB of old sessions on the flash": waiting for the user's yes
     this.podBehindKb=null;   // what the pod still holds unconfirmed
@@ -315,6 +317,28 @@ const model={
 };
 
 /* ---------------- packets ---------------- */
+/* steps from the firmware's rhythm step finder (0x0B, 12 bytes): u16 steps,
+   u16 contact ms (0 = unknown), u16 swing ms, u16 stride ms, u16 age ms (landing
+   to now), u8 flags (bit0 contact known). It needs no "foot at rest", so it also
+   works on a treadmill. Times are rebuilt from the age. */
+function onSteps(pod, d){
+  const now=performance.now()/1000, contact=d.getUint16(2,true), swing=d.getUint16(4,true), stride=d.getUint16(6,true);
+  const land=now-d.getUint16(8,true)/1000, to=land-swing/1000, haveC=(d.getUint8(10)&1)!==0;
+  pod.rhythm=true;
+  pod.rsteps.push({contact, swing, stride, haveC}); if(pod.rsteps.length>40) pod.rsteps.shift();
+  if(haveC) pod.rspans.push({a:to-contact/1000, b:to});
+  pod.redges.push({t:to, down:false}, {t:land, down:true}); pod.rland=land;
+  const old=now-RAW_S-2; while(pod.rspans.length && pod.rspans[0].b<old) pod.rspans.shift(); while(pod.redges.length && pod.redges[0].t<old) pod.redges.shift();
+}
+/* stance spans for the plots: from the rhythm steps when the pod sends them
+   (the open stance since the last landing included), else the pod's ground flag */
+function spansOf(p,t0,tNow,fn){
+  if(p.rhythm){ for(const r of p.rspans) if(r.b>=t0) fn(Math.max(r.a,t0),r.b);
+    const lastTo=p.redges.length?p.redges.filter(e=>!e.down).slice(-1)[0]:null;
+    if(p.rland && (!lastTo || p.rland>lastTo.t) && tNow-p.rland<3) fn(Math.max(p.rland,t0),tNow); return; }
+  let a=null; for(const s of p.buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ fn(a,s.t); a=null; } }
+  if(a!==null) fn(a,tNow);
+}
 function onStride(pod, d){
   const flags=d.getUint8(15);
   const s={steps:d.getUint16(0,true), fwd:d.getInt16(2,true), lat:d.getInt16(4,true), len:d.getUint16(6,true),
@@ -374,7 +398,7 @@ async function connect(side){
       c.addEventListener("characteristicvaluechanged",e=>fn(pod,e.target.value)); return c; }catch(e){ return null; } };
     try{ pod.cmd=await svc.getCharacteristic(CHR_CMD); }catch(e){ pod.cmd=null; }
     await sub(CHR_MOTION,onMotion); await sub(CHR_STATUS,onStatus);
-    const sd=await sub(CHR_STRIDE,onStride); await sub(CHR_LIVE,onLive); await sub(CHR_REC,onRec);
+    const sd=await sub(CHR_STRIDE,onStride); await sub(CHR_LIVE,onLive); await sub(CHR_REC,onRec); await sub(CHR_STEPS,onSteps);
     if(!sd) log(side+": this firmware sends no strides - flash the current pod firmware");
     try{
       const nus=await server.getPrimaryService(NUS);
@@ -619,6 +643,9 @@ function demoStep(now){
       d.setInt16(16,Math.round(Math.cos(hRaw)*10000),true); d.setInt16(18,Math.round(Math.sin(hRaw)*10000),true);
       onLive(p,new DataView(new Uint8Array([0,0,0,0,0,0,0,0,1,0]).buffer));
       onStride(p,d);
+      { const sb=new DataView(new ArrayBuffer(12)), con=Math.round(demo.contact*1000+(Math.random()-0.5)*30);
+        sb.setUint16(0,p.used,true); sb.setUint16(2,con,true); sb.setUint16(4,Math.round((demo.T-demo.contact)*1000),true);
+        sb.setUint16(6,Math.round(demo.T*1000+(Math.random()-0.5)*20),true); sb.setUint16(8,0,true); sb.setUint8(10,p.used>1?1:0); onSteps(p,sb); }
     }
   }
 }
@@ -691,10 +718,7 @@ const XYZ=["#FF6B6B","#5BD68A","#5BA8FF"];
 function fitCanvas(c){ const r=window.devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight;
   if(c.width!==Math.round(w*r) || c.height!==Math.round(h*r)){ c.width=Math.round(w*r); c.height=Math.round(h*r); }
   const g=c.getContext("2d"); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,w,h); return [g,w,h]; }
-function stanceSpans(buf,t0,tNow,fn){ let a=null;
-  for(const s of buf){ if(s.t<t0) continue; if(s.g && a===null) a=s.t; if(!s.g && a!==null){ fn(a,s.t); a=null; } }
-  if(a!==null) fn(a,tNow); }
-function drawPlot(c, buf, keys, tNow, minSpan){
+function drawPlot(c, p, keys, tNow, minSpan){ const buf=p.buf;
   const [g,w,h]=fitCanvas(c), L=30, T=5, B=h-5, t0=tNow-RAW_S;
   let lo=Infinity, hi=-Infinity;
   for(const s of buf) if(s.t>=t0) for(const k of keys){ if(s[k]<lo) lo=s[k]; if(s[k]>hi) hi=s[k]; }
@@ -705,7 +729,7 @@ function drawPlot(c, buf, keys, tNow, minSpan){
   const step=[0.5,1,2,5,10,20,45,90,180].find(s=>span/s<=4)||360;
   for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step){ g.strokeStyle="#2A3340"; g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(w-4,Y(v)); g.stroke();
     g.fillStyle="#5F6B7C"; g.fillText(String(Math.abs(v)<1e-9?0:+v.toFixed(1)),L-4,Y(v)); }
-  g.fillStyle="rgba(255,255,255,.045)"; stanceSpans(buf,t0,tNow,(a,b)=>g.fillRect(X(a),T,X(b)-X(a),B-T));
+  g.fillStyle="rgba(255,255,255,.045)"; spansOf(p,t0,tNow,(a,b)=>g.fillRect(X(a),T,X(b)-X(a),B-T));
   g.lineWidth=1.5; g.lineJoin="round";
   keys.forEach((k,i)=>{ g.strokeStyle=XYZ[i]; g.beginPath(); let pen=false, prev=null;
     for(const s of buf){ if(s.t<t0) continue; const jump=prev!==null && Math.abs(s[k]-prev)>300;      // turn wraps at 180
@@ -715,21 +739,27 @@ function drawPlot(c, buf, keys, tNow, minSpan){
 function drawBand(c, p, tNow){
   const [g,w,h]=fitCanvas(c), L=30, t0=tNow-RAW_S, X=t=>L+(clamp(t,t0,tNow)-t0)/RAW_S*(w-L-4);
   g.fillStyle="#232B36"; g.fillRect(L,7,w-L-4,h-14);
-  g.fillStyle=p.side==="L"?"#4EA8FF":"#FF8A3D"; stanceSpans(p.buf,t0,tNow,(a,b)=>g.fillRect(X(a),7,Math.max(1,X(b)-X(a)),h-14));
+  g.fillStyle=p.side==="L"?"#4EA8FF":"#FF8A3D"; spansOf(p,t0,tNow,(a,b)=>g.fillRect(X(a),7,Math.max(1,X(b)-X(a)),h-14));
   g.font="9px Menlo,Consolas,monospace"; g.textAlign="center"; g.fillStyle="#E6EAF1";
-  for(const e of p.edges){ if(e.t<t0) continue; g.textBaseline=e.down?"bottom":"top"; g.fillText(e.down?"▼":"▲", X(e.t), e.down?8:h-8); }
+  for(const e of (p.rhythm?p.redges:p.edges)){ if(e.t<t0) continue; g.textBaseline=e.down?"bottom":"top"; g.fillText(e.down?"▼":"▲", X(e.t), e.down?8:h-8); }
 }
 function drawRaw(now){
   const t=now/1000, sg=(v,d,n)=>(v>=0?"+":"−")+Math.abs(v).toFixed(d).padStart(n," ");
   for(const p of Object.values(pods)){
     const box=el("raw-"+p.side); if(box.hidden===p.live) box.hidden=!p.live;
     if(!p.live) continue; const s=p.side, c=p.buf[p.buf.length-1];
-    drawPlot(el("pa-"+s),p.buf,["ax","ay","az"],t,3); drawPlot(el("pg-"+s),p.buf,["pitch","roll","yaw"],t,60); drawBand(el("pb-"+s),p,t);
+    drawPlot(el("pa-"+s),p,["ax","ay","az"],t,3); drawPlot(el("pg-"+s),p,["pitch","roll","yaw"],t,60); drawBand(el("pb-"+s),p,t);
     if(c){ el("acc-"+s).innerHTML=`<i class="vx">x ${sg(c.ax,2,4)}</i><i class="vy">y ${sg(c.ay,2,4)}</i><i class="vz">z ${sg(c.az,2,4)}</i>`;
            el("ang-"+s).innerHTML=`<i class="vx">pitch ${sg(c.pitch,0,3)}</i><i class="vy">roll ${sg(c.roll,0,3)}</i><i class="vz">turn ${sg(c.yaw,0,3)}</i>`; }
   }
 }
 function timing(p){
+  if(p.rhythm){
+    const R=p.rsteps.slice(-20), T=R.map(x=>x.stride).filter(v=>v>300&&v<3000), C=R.filter(x=>x.haveC).map(x=>x.contact), W=R.map(x=>x.swing).filter(v=>v>50&&v<2000);
+    if(T.length<3) return null;
+    const mean=a=>a.reduce((u,v)=>u+v,0)/a.length, m=mean(T), c=C.length?mean(C):NaN;
+    return {stride:m, contact:c, swing:mean(W), duty:100*c/m, cad:120000/m, cv:100*Math.sqrt(mean(T.map(v=>(v-m)*(v-m))))/m, n:R.length, src:"rhythm"};
+  }
   const S=p.strides.filter(x=>x.valid&&!x.bench&&!x.abandoned&&x.peak>=NO_LIFT_MM&&x.contact+x.flight>300&&x.contact+x.flight<3000).slice(-20);
   if(S.length<3) return null;
   const T=S.map(x=>x.contact+x.flight), mean=a=>a.reduce((u,v)=>u+v,0)/a.length, m=mean(T), C=mean(S.map(x=>x.contact));
@@ -739,9 +769,10 @@ const TIM_ROWS=[["Stride time","stride","ms",0,1],["Contact time","contact","ms"
   ["Contact share of the stride","duty","%",1,1],["Cadence (both feet)","cad","steps/min",0,0],["Stride time variability","cv","%",1,0],["Strides in the average","n","",0,0]];
 function paintTiming(){
   const A=timing(pods.L), B=timing(pods.R);
+  el("tim-src").textContent="last 20 strides"+((A&&A.src)||(B&&B.src)?" · step rhythm":(A||B)?" · rest-based strides (old firmware)":"");
   el("tim").innerHTML=TIM_ROWS.map(([name,k,u,dp,diff])=>{
-    const c=x=>x?x[k].toFixed(dp)+(u?" <small>"+u+"</small>":""):"–";
-    let d="–"; if(A&&B&&diff){ const v=B[k]-A[k]; d=(v>=0?"+":"−")+Math.abs(v).toFixed(dp)+" <small>"+u+(u==="ms"?" · "+(100*Math.abs(v)/((A[k]+B[k])/2)).toFixed(1)+" %":"")+"</small>"; }
+    const c=x=>x&&isFinite(x[k])?x[k].toFixed(dp)+(u?" <small>"+u+"</small>":""):"–";
+    let d="–"; if(A&&B&&diff&&isFinite(A[k])&&isFinite(B[k])){ const v=B[k]-A[k]; d=(v>=0?"+":"−")+Math.abs(v).toFixed(dp)+" <small>"+u+(u==="ms"?" · "+(100*Math.abs(v)/((A[k]+B[k])/2)).toFixed(1)+" %":"")+"</small>"; }
     return `<tr><td>${name}</td><td>${c(A)}</td><td>${c(B)}</td><td>${d}</td></tr>`; }).join("");
 }
 

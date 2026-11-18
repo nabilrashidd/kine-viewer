@@ -593,8 +593,10 @@ section.block > h2{
         <div class="ctrl">
           <div class="btn-row">
             <button class="btn" id="btn-pose-photo">Trail photo: left foot</button>
-            <button class="btn" id="btn-pose-off" disabled>Back to motion</button>
+            <button class="btn" id="btn-pose-road">Road photo: both feet</button>
           </div>
+          <button class="btn" id="btn-pose-off" disabled>Back to motion</button>
+          <div class="toggles" id="pose-feet"></div>
           <div class="slider">
             <label for="s-pose-yaw">Toe turned to the left</label>
             <output id="o-pose-yaw">45&deg;</output>
@@ -603,12 +605,22 @@ section.block > h2{
           <div class="slider">
             <label for="s-pose-pitch">Toe up + / down &minus; (to the ground)</label>
             <output id="o-pose-pitch">0&deg;</output>
-            <input type="range" id="s-pose-pitch" min="-45" max="45" step="1" value="0">
+            <input type="range" id="s-pose-pitch" min="-90" max="60" step="1" value="0">
           </div>
           <div class="slider">
             <label for="s-pose-roll">Left edge up + / down &minus;</label>
             <output id="o-pose-roll">0&deg;</output>
             <input type="range" id="s-pose-roll" min="-30" max="30" step="1" value="0">
+          </div>
+          <div class="slider">
+            <label for="s-pose-lift">Lowest point above the ground</label>
+            <output id="o-pose-lift">0 cm</output>
+            <input type="range" id="s-pose-lift" min="0" max="60" step="1" value="0">
+          </div>
+          <div class="slider">
+            <label for="s-pose-fwd">Ahead + / behind &minus;</label>
+            <output id="o-pose-fwd">0 cm</output>
+            <input type="range" id="s-pose-fwd" min="-70" max="70" step="1" value="0">
           </div>
           <div class="slider">
             <label for="s-pose-slope">Ground falls towards the camera</label>
@@ -617,11 +629,9 @@ section.block > h2{
           </div>
         </div>
         <p class="note" id="pose-note">
-          Holds the shoe still in a pose set by hand. The trail photo preset is the
-          runner's left foot flat on a trail that falls about 10&deg; towards the camera,
-          toe turned about 45&deg; out to his left, seen from in front and above. Read off
-          one photo, so each angle is an estimate (about &plusmn;10&deg;): move the sliders
-          until it matches. Drag the view as usual.
+          Holds the shoes still in a pose set by hand: blue = left foot, orange = right.
+          The sliders move the foot picked above. Read off one photo, so each angle is an
+          estimate (about &plusmn;10&deg;): move the sliders until it matches. Drag the view as usual.
         </p>
       </section>
 
@@ -1002,7 +1012,7 @@ function shade(base,n){
 const shoeMesh=buildShoe();
 const podMesh=buildPod();
 
-function drawMesh(mesh,q,pos,bucket){
+function drawMesh(mesh,q,pos,bucket,tint){
   const v=mesh.verts, n=v.length/3;
   const wx=new Float32Array(n), wy=new Float32Array(n), wz=new Float32Array(n);
   for(let i=0;i<n;i++){
@@ -1032,8 +1042,10 @@ function drawMesh(mesh,q,pos,bucket){
     const mcx=(v[a*3]+v[b*3]+v[c*3])/3;
     const mcy=(v[a*3+1]+v[b*3+1]+v[c*3+1])/3;
     const mcz=(v[a*3+2]+v[b*3+2]+v[c*3+2])/3;
+    let base=mesh.colorFn(mcx,mcy,mcz);
+    if(tint && (base===MAT.upper||base===MAT.collar)) base=tint;      // which foot, in the pose mode
     bucket.push({d:(A[2]+B[2]+C[2])/3, p:[pa,pb,pc],
-                 col:shade(mesh.colorFn(mcx,mcy,mcz),[nx,ny,nz])});
+                 col:shade(base,[nx,ny,nz])});
   }
 }
 
@@ -1133,10 +1145,10 @@ function render(q,pos){
   VM=viewMatrix();
   ctx.clearRect(0,0,W,H);
   drawGround();
-  drawShadow(q,pos);
+  const shoes = pose.on && poseShoes.length ? poseShoes : [{q,pos,tint:null}];
+  for(const s of shoes) drawShadow(s.q,s.pos);
   const bucket=[];
-  drawMesh(shoeMesh,q,pos,bucket);
-  drawMesh(podMesh,q,pos,bucket);
+  for(const s of shoes){ drawMesh(shoeMesh,s.q,s.pos,bucket,s.tint); drawMesh(podMesh,s.q,s.pos,bucket); }
   bucket.sort((a,b)=>b.d-a.d);
   for(const f of bucket){
     ctx.fillStyle=f.col;
@@ -2202,43 +2214,76 @@ function setView(name){
 document.querySelectorAll(".plane").forEach(b=>
   b.addEventListener("click",()=>setView(b.dataset.view)));
 
-/* ---- pose from a photo: the shoe held still in a pose set by hand ----
-   The angles are relative to the ground, and the ground can fall towards
-   +X (where the camera stands in the preset), so "flat on the trail" is
-   pitch 0 on any slope. The shoe is lowered until its lowest point touches
-   the ground. */
-const pose={on:false, yaw:45, pitch:0, roll:0, slope:10};
-const POSE_PHOTO={yaw:45, pitch:0, roll:0, slope:10, cam:{az:0.0, el:0.55, dist:0.62}};
+/* ---- pose from a photo: shoes held still in poses set by hand ----
+   Each foot's angles are relative to the ground, and the ground can fall
+   towards +X (where the camera stands in the presets), so "flat on the
+   trail" is pitch 0 on any slope. Each shoe is placed so its lowest point
+   sits `lift` above the ground. +X ahead, +Y left, as everywhere here. */
+const pose={on:false, slope:10, sel:0, preset:"",
+            feet:[{side:"L", yaw:45, pitch:0, roll:0, lift:0, fwd:0, y:0}]};
+const FOOT_TINT={L:[0x2F,0x6C,0xB4], R:[0xC0,0x62,0x2A]};
+let poseShoes=[];                      // {q, pos, tint} per foot, made each frame
+const POSE_PRESETS={
+  /* the trail photo: his left foot flat on a trail falling ~10 deg towards the
+     camera, toe turned ~45 deg out to his left, seen from in front and above */
+  photo:{slope:10, feet:[{side:"L", yaw:45, pitch:0, roll:0, lift:0, fwd:0, y:0}],
+         cam:{az:0.0, el:0.55, dist:0.62, target:[0,0,0.04]}},
+  /* the road photo, both feet in the air: her right foot ahead just before a
+     heel landing (toe up ~15, turned ~20 out, a few cm up), her left foot
+     behind high in the swing (toe down ~70, ankle ~30 cm up); camera in front,
+     a little to her left (the rear foot shows to the right of the front one),
+     slightly above */
+  road:{slope:0, feet:[{side:"R", yaw:-20, pitch:15, roll:5, lift:3, fwd:30, y:-0.09},
+                       {side:"L", yaw:5, pitch:-70, roll:0, lift:15, fwd:-35, y:0.09}],
+        cam:{az:0.35, el:0.18, dist:1.50, target:[0,0,0.15]}}
+};
 function groundZ(x){ return pose.on ? -Math.tan(pose.slope*D2R)*x : 0; }
-function poseQ(){
-  return qMul(qFromAxis(0,1,0,pose.slope*D2R), qFromEuler(pose.roll,pose.pitch,pose.yaw));
+function footQ(f){
+  return qMul(qFromAxis(0,1,0,pose.slope*D2R), qFromEuler(f.roll,f.pitch,f.yaw));
 }
-function poseZ(q){
-  const v=shoeMesh.verts, ts=Math.tan(pose.slope*D2R);
+function footPos(f,q){
+  const v=shoeMesh.verts, ts=Math.tan(pose.slope*D2R), x=f.fwd/100;
   let lo=Infinity;
-  for(let i=0;i<v.length;i+=3){ const r=qRot(q,[v[i],v[i+1],v[i+2]]); lo=Math.min(lo, r[2]+ts*r[0]); }
-  return -lo;
+  for(let i=0;i<v.length;i+=3){ const r=qRot(q,[v[i],v[i+1],v[i+2]]); lo=Math.min(lo, r[2]+ts*(r[0]+x)); }
+  return [x, f.y, -lo+f.lift/100];
 }
+const POSE_KEYS=["yaw","pitch","roll","lift","fwd"];
 function poseSync(){
-  for(const k of ["yaw","pitch","roll","slope"]){
-    el("s-pose-"+k).value=pose[k];
-    el("o-pose-"+k).innerHTML=(pose[k]>0&&k!=="slope"?"+":"")+pose[k]+"&deg;";
+  const f=pose.feet[pose.sel];
+  for(const k of POSE_KEYS){
+    el("s-pose-"+k).value=f[k];
+    const u=(k==="lift"||k==="fwd")?" cm":"&deg;";
+    el("o-pose-"+k).innerHTML=(f[k]>0&&k!=="lift"?"+":"")+f[k]+u;
   }
+  el("s-pose-slope").value=pose.slope; el("o-pose-slope").innerHTML=pose.slope+"&deg;";
   el("btn-pose-off").disabled=!pose.on;
-  el("btn-pose-photo").setAttribute("aria-pressed",String(pose.on));
+  el("btn-pose-photo").setAttribute("aria-pressed",String(pose.on&&pose.preset==="photo"));
+  el("btn-pose-road").setAttribute("aria-pressed",String(pose.on&&pose.preset==="road"));
+  const box=el("pose-feet"); box.innerHTML="";
+  if(pose.feet.length>1) pose.feet.forEach((g,i)=>{
+    const b=document.createElement("button"); b.className="toggle"; b.type="button";
+    b.textContent=(g.side==="L"?"Left":"Right")+" foot"; b.setAttribute("aria-pressed",String(i===pose.sel));
+    b.style.color=g.side==="L"?"#4EA8FF":"#FF8A3D";
+    b.addEventListener("click",()=>{ pose.sel=i; poseSync(); });
+    box.appendChild(b);
+  });
 }
-function poseStart(p){
-  Object.assign(pose,{yaw:p.yaw,pitch:p.pitch,roll:p.roll,slope:p.slope,on:true});
+function poseStart(name){
+  const p=POSE_PRESETS[name];
+  pose.on=true; pose.preset=name; pose.slope=p.slope; pose.sel=0;
+  pose.feet=p.feet.map(f=>Object.assign({},f));
   setView("free");
-  cam.az=p.cam.az; cam.el=p.cam.el; cam.dist=p.cam.dist; cam.target=[0,0,0.04];
+  Object.assign(cam,{az:p.cam.az, el:p.cam.el, dist:p.cam.dist, target:p.cam.target.slice()});
   trail.length=0;
   poseSync();
 }
-el("btn-pose-photo").addEventListener("click",()=>poseStart(POSE_PHOTO));
+el("btn-pose-photo").addEventListener("click",()=>poseStart("photo"));
+el("btn-pose-road").addEventListener("click",()=>poseStart("road"));
 el("btn-pose-off").addEventListener("click",()=>{
-  pose.on=false; Object.assign(cam,{az:-0.72, el:0.30, dist:0.95, target:[0,0,0.10]}); trail.length=0; poseSync(); });
-for(const k of ["yaw","pitch","roll","slope"])
-  el("s-pose-"+k).addEventListener("input",e=>{ pose[k]=+e.target.value; if(!pose.on){ pose.on=true; trail.length=0; } poseSync(); });
+  pose.on=false; pose.preset=""; Object.assign(cam,{az:-0.72, el:0.30, dist:0.95, target:[0,0,0.10]}); trail.length=0; poseSync(); });
+for(const k of POSE_KEYS)
+  el("s-pose-"+k).addEventListener("input",e=>{ pose.feet[pose.sel][k]=+e.target.value; if(!pose.on){ pose.on=true; trail.length=0; } poseSync(); });
+el("s-pose-slope").addEventListener("input",e=>{ pose.slope=+e.target.value; if(!pose.on){ pose.on=true; trail.length=0; } poseSync(); });
 poseSync();
 
 /* ---- controls ---- */
@@ -2456,8 +2501,9 @@ function frame(t){
   let q,pos,pitch,roll,yaw,stance;
 
   if(pose.on){
-    q=poseQ(); pos=[0,0,poseZ(q)];
-    roll=pose.roll; pitch=pose.pitch; yaw=pose.yaw;     // relative to the ground, as set
+    poseShoes=pose.feet.map(f=>{ const qq=footQ(f); return {q:qq, pos:footPos(f,qq), tint:FOOT_TINT[f.side]}; });
+    q=poseShoes[pose.sel].q; pos=poseShoes[pose.sel].pos;
+    const f=pose.feet[pose.sel]; roll=f.roll; pitch=f.pitch; yaw=f.yaw;     // relative to the ground, as set
     accMag=1; gyrY=0; stance=true;
   }else if(live){
     q=liveQ;

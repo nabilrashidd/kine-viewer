@@ -589,6 +589,43 @@ section.block > h2{
       </section>
 
       <section class="block">
+        <h2>Pose from a photo</h2>
+        <div class="ctrl">
+          <div class="btn-row">
+            <button class="btn" id="btn-pose-photo">Trail photo: left foot</button>
+            <button class="btn" id="btn-pose-off" disabled>Back to motion</button>
+          </div>
+          <div class="slider">
+            <label for="s-pose-yaw">Toe turned to the left</label>
+            <output id="o-pose-yaw">45&deg;</output>
+            <input type="range" id="s-pose-yaw" min="-90" max="90" step="1" value="45">
+          </div>
+          <div class="slider">
+            <label for="s-pose-pitch">Toe up + / down &minus; (to the ground)</label>
+            <output id="o-pose-pitch">0&deg;</output>
+            <input type="range" id="s-pose-pitch" min="-45" max="45" step="1" value="0">
+          </div>
+          <div class="slider">
+            <label for="s-pose-roll">Left edge up + / down &minus;</label>
+            <output id="o-pose-roll">0&deg;</output>
+            <input type="range" id="s-pose-roll" min="-30" max="30" step="1" value="0">
+          </div>
+          <div class="slider">
+            <label for="s-pose-slope">Ground falls towards the camera</label>
+            <output id="o-pose-slope">10&deg;</output>
+            <input type="range" id="s-pose-slope" min="0" max="30" step="1" value="10">
+          </div>
+        </div>
+        <p class="note" id="pose-note">
+          Holds the shoe still in a pose set by hand. The trail photo preset is the
+          runner's left foot flat on a trail that falls about 10&deg; towards the camera,
+          toe turned about 45&deg; out to his left, seen from in front and above. Read off
+          one photo, so each angle is an estimate (about &plusmn;10&deg;): move the sliders
+          until it matches. Drag the view as usual.
+        </p>
+      </section>
+
+      <section class="block">
         <h2>Simulation</h2>
         <div class="ctrl">
           <div class="slider">
@@ -1008,8 +1045,8 @@ function drawGround(){
   const gy=Math.round(cam.target[1]/step)*step;
   for(let i=-N;i<=N;i++){
     for(const axis of [0,1]){
-      const a=axis? [gx-N*step, gy+i*step, 0] : [gx+i*step, gy-N*step, 0];
-      const b=axis? [gx+N*step, gy+i*step, 0] : [gx+i*step, gy+N*step, 0];
+      const a=axis? [gx-N*step, gy+i*step, groundZ(gx-N*step)] : [gx+i*step, gy-N*step, groundZ(gx+i*step)];
+      const b=axis? [gx+N*step, gy+i*step, groundZ(gx+N*step)] : [gx+i*step, gy+N*step, groundZ(gx+i*step)];
       const va=toView(a), vb=toView(b);
       if(va[2]<0.02||vb[2]<0.02) continue;
       const pa=project(va), pb=project(vb);
@@ -1039,7 +1076,7 @@ function drawShadow(q,pos){
     const seq = s? pts.slice().reverse() : pts;
     for(const p of seq){
       const off = s? -w:w;
-      const v=toView([p[0],p[1]+off,0]);
+      const v=toView([p[0],p[1]+off,groundZ(p[0])]);
       if(v[2]<0.02) continue;
       const sp=project(v); if(!sp) continue;
       if(!started){ctx.moveTo(sp[0],sp[1]);started=true;} else ctx.lineTo(sp[0],sp[1]);
@@ -2165,6 +2202,45 @@ function setView(name){
 document.querySelectorAll(".plane").forEach(b=>
   b.addEventListener("click",()=>setView(b.dataset.view)));
 
+/* ---- pose from a photo: the shoe held still in a pose set by hand ----
+   The angles are relative to the ground, and the ground can fall towards
+   +X (where the camera stands in the preset), so "flat on the trail" is
+   pitch 0 on any slope. The shoe is lowered until its lowest point touches
+   the ground. */
+const pose={on:false, yaw:45, pitch:0, roll:0, slope:10};
+const POSE_PHOTO={yaw:45, pitch:0, roll:0, slope:10, cam:{az:0.0, el:0.55, dist:0.62}};
+function groundZ(x){ return pose.on ? -Math.tan(pose.slope*D2R)*x : 0; }
+function poseQ(){
+  return qMul(qFromAxis(0,1,0,pose.slope*D2R), qFromEuler(pose.roll,pose.pitch,pose.yaw));
+}
+function poseZ(q){
+  const v=shoeMesh.verts, ts=Math.tan(pose.slope*D2R);
+  let lo=Infinity;
+  for(let i=0;i<v.length;i+=3){ const r=qRot(q,[v[i],v[i+1],v[i+2]]); lo=Math.min(lo, r[2]+ts*r[0]); }
+  return -lo;
+}
+function poseSync(){
+  for(const k of ["yaw","pitch","roll","slope"]){
+    el("s-pose-"+k).value=pose[k];
+    el("o-pose-"+k).innerHTML=(pose[k]>0&&k!=="slope"?"+":"")+pose[k]+"&deg;";
+  }
+  el("btn-pose-off").disabled=!pose.on;
+  el("btn-pose-photo").setAttribute("aria-pressed",String(pose.on));
+}
+function poseStart(p){
+  Object.assign(pose,{yaw:p.yaw,pitch:p.pitch,roll:p.roll,slope:p.slope,on:true});
+  setView("free");
+  cam.az=p.cam.az; cam.el=p.cam.el; cam.dist=p.cam.dist; cam.target=[0,0,0.04];
+  trail.length=0;
+  poseSync();
+}
+el("btn-pose-photo").addEventListener("click",()=>poseStart(POSE_PHOTO));
+el("btn-pose-off").addEventListener("click",()=>{
+  pose.on=false; Object.assign(cam,{az:-0.72, el:0.30, dist:0.95, target:[0,0,0.10]}); trail.length=0; poseSync(); });
+for(const k of ["yaw","pitch","roll","slope"])
+  el("s-pose-"+k).addEventListener("input",e=>{ pose[k]=+e.target.value; if(!pose.on){ pose.on=true; trail.length=0; } poseSync(); });
+poseSync();
+
 /* ---- controls ---- */
 function ledSwatch(sw){
   const c=n=>n==="off"?"#2E2C28":"rgb("+LED_COL[n==="snake"?"lila":n].join(",")+")";
@@ -2379,7 +2455,11 @@ function frame(t){
 
   let q,pos,pitch,roll,yaw,stance;
 
-  if(live){
+  if(pose.on){
+    q=poseQ(); pos=[0,0,poseZ(q)];
+    roll=pose.roll; pitch=pose.pitch; yaw=pose.yaw;     // relative to the ground, as set
+    accMag=1; gyrY=0; stance=true;
+  }else if(live){
     q=liveQ;
     pos = (hasOdom && usePos)
         ? [odom.p[0], odom.p[1], 0.11+((navFw&&podFree)?odom.p[2]:Math.max(0,odom.p[2]))]
@@ -2466,7 +2546,7 @@ function frame(t){
   if(accMag>peakA) peakA=accMag;
   if(gyrY<peakToeOff) peakToeOff=gyrY;
 
-  if(opts.trail && (!live || usePos)){
+  if(opts.trail && !pose.on && (!live || usePos)){
     const a=podAnchor();
     const r=qRot(q,[a[0],a[1],a[2]+0.012]);
     trail.push([r[0]+pos[0], r[1]+pos[1], r[2]+pos[2]]);

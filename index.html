@@ -109,6 +109,13 @@ header.bar{
 @media (max-width:900px){
   .main{grid-template-columns:minmax(0,1fr)}
 }
+/* side by side: the page is the window's height, and the 3-D column and the
+   side panel each scroll on their own */
+@media (min-width:901px){
+  .app{height:100vh;height:100dvh}
+  .leftcol{min-height:0;overflow-y:auto;display:flex;flex-direction:column}
+  .leftcol .stage{flex:1 0 420px}
+}
 
 /* ---------- stage ---------- */
 .stage{
@@ -244,6 +251,9 @@ section.block > h2{
 .angle .bar .fill{position:absolute;top:0;bottom:0;background:var(--accent)}
 .angle .num{font-family:var(--f-mono);font-size:12.5px;font-variant-numeric:tabular-nums;text-align:right}
 
+.xyz{padding:10px 16px 14px;background:var(--surface);border-top:1px solid var(--line)}
+.xyz canvas{display:block;width:100%;height:110px;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--line-soft)}
+.xyz .tl-head span:last-child{text-transform:none;letter-spacing:0}
 .strip-wrap{display:flex;flex-direction:column;gap:10px}
 .strip{position:relative}
 .strip .cap{
@@ -363,7 +373,7 @@ section.block > h2{
   </header>
 
   <div class="main">
-    <div>
+    <div class="leftcol">
       <div class="stage">
         <canvas id="scene"></canvas>
         <div class="badge" id="badge" hidden></div>
@@ -396,6 +406,25 @@ section.block > h2{
           <div class="tl-cursor" id="tl-cursor"></div>
         </div>
         <div class="tl-events" id="tl-events"></div>
+      </div>
+
+      <div class="xyz">
+        <div class="tl-head">
+          <span>Acceleration x / y / z (g) &mdash; last 6 s</span>
+          <span id="xyz-acc"></span>
+        </div>
+        <canvas id="xyz-acc-cv" aria-label="Acceleration x, y and z over the last 6 seconds"></canvas>
+        <div class="tl-head">
+          <span>Gyro x / y / z (&deg;/s) &mdash; last 6 s</span>
+          <span id="xyz-gyr"></span>
+        </div>
+        <canvas id="xyz-gyr-cv" aria-label="Gyro x, y and z over the last 6 seconds"></canvas>
+        <div class="legend">
+          <span><i style="background:var(--ax-x)"></i>X toe</span>
+          <span><i style="background:var(--ax-y)"></i>Y left</span>
+          <span><i style="background:var(--ax-z)"></i>Z up</span>
+          <span id="xyz-note">every motion packet from the pod, shoe axes</span>
+        </div>
       </div>
     </div>
 
@@ -1270,6 +1299,43 @@ let histI=0;
 
 const el=id=>document.getElementById(id);
 
+/* ---- x / y / z plots under the shoe: one entry per motion packet ---- */
+const XYZ_SPAN_MS=6000;
+const xyzBuf=[];                       // {t, a:[x,y,z] g, g:[x,y,z] deg/s}
+function xyzPush(a,g){
+  const t=performance.now();
+  xyzBuf.push({t,a:a.slice(),g:g.slice()});
+  while(xyzBuf.length && xyzBuf[0].t<t-XYZ_SPAN_MS-500) xyzBuf.shift();
+}
+function drawXYZ(cv,key,minSpan,digits,capId){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const w=cv.clientWidth||300, h=cv.clientHeight||110;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr); }
+  const c=cv.getContext("2d");
+  c.setTransform(dpr,0,0,dpr,0,0);
+  c.clearRect(0,0,w,h);
+  const now=performance.now(), t0=now-XYZ_SPAN_MS;
+  let lo=Infinity, hi=-Infinity;
+  for(const s of xyzBuf){ if(s.t<t0) continue; for(const v of s[key]){ if(v<lo) lo=v; if(v>hi) hi=v; } }
+  if(!isFinite(lo)){ lo=-minSpan/2; hi=minSpan/2; }
+  const mid=(lo+hi)/2, sp=Math.max(minSpan,(hi-lo)*1.1); lo=mid-sp/2; hi=mid+sp/2;
+  const X=t=>(t-t0)/XYZ_SPAN_MS*w, Y=v=>h-3-(v-lo)/(hi-lo)*(h-6);
+  if(lo<0&&hi>0){ c.strokeStyle="rgba(90,104,124,.45)"; c.lineWidth=1; c.beginPath(); c.moveTo(0,Y(0)); c.lineTo(w,Y(0)); c.stroke(); }
+  const css=getComputedStyle(document.documentElement);
+  const COL=["--ax-x","--ax-y","--ax-z"].map(v=>css.getPropertyValue(v).trim()||"#ccc");
+  for(let j=0;j<3;j++){
+    c.strokeStyle=COL[j]; c.lineWidth=1.4; c.beginPath(); let first=true;
+    for(const s of xyzBuf){ if(s.t<t0) continue; const x=X(s.t), y=Y(s[key][j]); if(first){ c.moveTo(x,y); first=false; } else c.lineTo(x,y); }
+    c.stroke();
+  }
+  c.fillStyle="#5F6B7C"; c.font="10px IBM Plex Mono, monospace";
+  c.fillText(hi.toFixed(digits),4,11); c.fillText(lo.toFixed(digits),4,h-5);
+  const last=xyzBuf[xyzBuf.length-1];
+  el(capId).innerHTML = last
+    ? ["x","y","z"].map((n,j)=>"<span style=\"color:"+COL[j]+"\">"+n+" "+(last[key][j]>=0?"+":"−")+Math.abs(last[key][j]).toFixed(digits)+"</span>").join(" &nbsp;")
+    : "—";
+}
+
 /* ---- rolling strips ---- */
 function drawStrip(cv,data,color,center,scale,unitFmt){
   const dpr=Math.min(window.devicePixelRatio||1,2);
@@ -1930,6 +1996,7 @@ function onMotion(e){
                d.getInt16(4,true)/10000, d.getInt16(6,true)/10000]);
   liveAcc=[d.getInt16(8,true)/1000, d.getInt16(10,true)/1000, d.getInt16(12,true)/1000];
   liveGyr=[d.getInt16(14,true)/10, d.getInt16(16,true)/10, d.getInt16(18,true)/10];
+  xyzPush(liveAcc,liveGyr);
   livePkts++;
   const now=performance.now();
   if(now-lastPktT>1000){ liveRate=livePkts; livePkts=0; lastPktT=now; }
@@ -2244,6 +2311,7 @@ async function relayPoll(){
     /* feed the same variables a Bluetooth notification would */
     liveQ=qNorm(j.state.q);
     liveAcc=j.state.a; liveGyr=j.state.g;
+    xyzPush(liveAcc,liveGyr);
     liveRate=j.state.rate||0;
     if(j.state.odom){ Object.assign(odom,j.state.odom); hasOdom=true; }
     if(!following){
@@ -2393,6 +2461,8 @@ function frame(t){
 
   accHist[histI]=accMag; gyrHist[histI]=gyrY;
   histI=(histI+1)%accHist.length;
+  /* the synthetic runner only models |a| and the pitch rate: shown as z and y */
+  if(!live) xyzPush([0,0,accMag],[0,gyrY,0]);
   if(accMag>peakA) peakA=accMag;
   if(gyrY<peakToeOff) peakToeOff=gyrY;
 
@@ -2451,6 +2521,10 @@ function frame(t){
   el("cap-gyr").textContent=gyrY.toFixed(0)+" °/s";
   drawStrip(el("strip-acc"),accHist,"#FF8A3D",1,4.4);
   drawStrip(el("strip-gyr"),gyrHist,"#4EA8FF",0,0.022);
+  drawXYZ(el("xyz-acc-cv"),"a",2,2,"xyz-acc");
+  drawXYZ(el("xyz-gyr-cv"),"g",100,0,"xyz-gyr");
+  el("xyz-note").textContent = live ? "every motion packet from the pod, shoe axes, biases removed"
+                                    : "synthetic runner: only |a| (on z) and the pitch rate (on y) are modelled";
   drawDriftChart();
   updateGaitPanels();
 

@@ -135,10 +135,12 @@ table.tim{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
         <div class="raw">
           <div class="L" id="raw-L" hidden><h3>Left foot</h3>
             <div class="lab"><b>Acceleration (g)</b><span class="vals" id="acc-L"></span></div><canvas id="pa-L"></canvas>
+            <div class="lab"><b>Gyro (°/s)</b><span class="vals" id="gyr-L"></span></div><canvas id="pr-L"></canvas>
             <div class="lab"><b>Angles (°)</b><span class="vals" id="ang-L"></span></div><canvas id="pg-L"></canvas>
             <div class="lab"><b>Foot on the ground</b><span>▼ landing · ▲ toe-off</span></div><canvas class="band" id="pb-L"></canvas></div>
           <div class="R" id="raw-R" hidden><h3>Right foot</h3>
             <div class="lab"><b>Acceleration (g)</b><span class="vals" id="acc-R"></span></div><canvas id="pa-R"></canvas>
+            <div class="lab"><b>Gyro (°/s)</b><span class="vals" id="gyr-R"></span></div><canvas id="pr-R"></canvas>
             <div class="lab"><b>Angles (°)</b><span class="vals" id="ang-R"></span></div><canvas id="pg-R"></canvas>
             <div class="lab"><b>Foot on the ground</b><span>▼ landing · ▲ toe-off</span></div><canvas class="band" id="pb-R"></canvas></div>
         </div>
@@ -210,7 +212,7 @@ class Pod{
     this.rate=0; this.vbat=0; this.mode=""; this.chip="";
     this.strides=[]; this.used=0; this.skipped=0; this.mic={ok:0,no:0,deaf:0};
     this.lastStride=null; this.swing=null; this.queue=Promise.resolve(); this.nusBuf="";
-    this.noLift=0; this.acc=[0,0,1]; this.buf=[]; this.edges=[];
+    this.noLift=0; this.acc=[0,0,1]; this.gyr=[0,0,0]; this.buf=[]; this.edges=[];
     this.rhythm=false; this.rsteps=[]; this.rspans=[]; this.redges=[]; this.rland=0;
     this.rec=null;           // a streamed recording coming in (survives reconnects)
     this.recAsk=null;        // "KB of old sessions on the flash": waiting for the user's yes
@@ -224,7 +226,7 @@ class Pod{
   get live(){ return !!this.dev || this.sim; }
   sample(t){                                    // one 50 Hz row for the raw plots
     const [w,x,y,z]=this.q;
-    this.buf.push({t, ax:this.acc[0], ay:this.acc[1], az:this.acc[2], pitch:pitchOf(this.q),
+    this.buf.push({t, ax:this.acc[0], ay:this.acc[1], az:this.acc[2], gx:this.gyr[0], gy:this.gyr[1], gz:this.gyr[2], pitch:pitchOf(this.q),
                    roll:Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y))*R2D, yaw:yawOf(this.q)*R2D, g:this.ground});
     while(this.buf.length && this.buf[0].t<t-RAW_S-1) this.buf.shift();
     while(this.edges.length && this.edges[0].t<t-RAW_S-1) this.edges.shift();
@@ -362,6 +364,7 @@ function onLive(pod, d){
 function onMotion(pod, d){
   pod.q=[d.getInt16(0,true)/10000, d.getInt16(2,true)/10000, d.getInt16(4,true)/10000, d.getInt16(6,true)/10000];
   pod.acc=[d.getInt16(8,true)/1000, d.getInt16(10,true)/1000, d.getInt16(12,true)/1000];
+  pod.gyr=[d.getInt16(14,true)/10, d.getInt16(16,true)/10, d.getInt16(18,true)/10];
   pod.sample(performance.now()/1000);
 }
 function onStatus(pod, d){
@@ -598,7 +601,7 @@ function startDemo(){
   const T=1.08;                               // stride period, s (walking, ~111 steps/min)
   demo.T=T; demo.next={L:0.6, R:0.6+T/2}; demo.contact=0.66;
   demo.drift={L:0.10*D2R, R:-0.06*D2R};        // each pod's own heading drift, rad/s (gyro bias left after the filter)
-  demo.prevPos={};
+  demo.prevPos={}; demo.prevPit={};
   for(const p of Object.values(pods)){ p.sim=true; p.mode="GAIT (auto)"; p.rate=p.side==="L"?429:406; p.vbat=3900; p.chip="simulated"; }
   log("demo: two simulated pods walking a gentle curve; each pod's heading drifts on its own");
   note("Demo running. The pods' headings drift apart on purpose: watch the learned heading gap.","warn");
@@ -623,6 +626,8 @@ function demoStep(now){
     p.q=[Math.cos(yawRaw/2)*Math.cos(th/2), -Math.sin(yawRaw/2)*Math.sin(th/2), Math.cos(yawRaw/2)*Math.sin(th/2), Math.sin(yawRaw/2)*Math.cos(th/2)];
     const nz=()=>(Math.random()-0.5)*0.04, hit=u>=0&&u<0.03 ? 3.2*Math.sin(u/0.03*Math.PI) : 0;
     p.acc=[(u<cf?0:1.6*Math.sin(sw*2*Math.PI))+Math.sin(pit)+nz(), 0.15*Math.sin(u*4*Math.PI)+nz(), Math.cos(pit)+hit+(u<cf?0:0.5*Math.cos(sw*2*Math.PI))+nz()];
+    const pp=demo.prevPit[side]; demo.prevPit[side]=pit;                 // demo gyro: the pitch rate on y
+    p.gyr=[50*nz(), pp===undefined||dt<=0||dt>0.1 ? 0 : clamp((pit-pp)/dt*R2D,-2000,2000), 50*nz()];
     p.sample(now/1000);
     if(p.ground && demo.t>tl-demo.T+demo.contact && demo.t<tl){
       onLive(p,new DataView(new Uint8Array([0,0,0,0,0,0,0,0,0,0]).buffer));
@@ -719,7 +724,7 @@ const XYZ=["#FF6B6B","#5BD68A","#5BA8FF"];
 function fitCanvas(c){ const r=window.devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight;
   if(c.width!==Math.round(w*r) || c.height!==Math.round(h*r)){ c.width=Math.round(w*r); c.height=Math.round(h*r); }
   const g=c.getContext("2d"); g.setTransform(r,0,0,r,0,0); g.clearRect(0,0,w,h); return [g,w,h]; }
-function drawPlot(c, p, keys, tNow, minSpan){ const buf=p.buf;
+function drawPlot(c, p, keys, tNow, minSpan, wrap){ const buf=p.buf;
   const [g,w,h]=fitCanvas(c), L=30, T=5, B=h-5, t0=tNow-RAW_S;
   let lo=Infinity, hi=-Infinity;
   for(const s of buf) if(s.t>=t0) for(const k of keys){ if(s[k]<lo) lo=s[k]; if(s[k]>hi) hi=s[k]; }
@@ -727,13 +732,13 @@ function drawPlot(c, p, keys, tNow, minSpan){ const buf=p.buf;
   const mid=(lo+hi)/2, span=Math.max(minSpan,(hi-lo)*1.15); lo=mid-span/2; hi=mid+span/2;
   const X=t=>L+(t-t0)/RAW_S*(w-L-4), Y=v=>B-(v-lo)/(hi-lo)*(B-T);
   g.font="10px Menlo,Consolas,monospace"; g.textBaseline="middle"; g.textAlign="right"; g.lineWidth=1;
-  const step=[0.5,1,2,5,10,20,45,90,180].find(s=>span/s<=4)||360;
+  const step=[0.5,1,2,5,10,20,45,90,180,250,500,1000].find(s=>span/s<=4)||2000;
   for(let v=Math.ceil(lo/step)*step; v<=hi; v+=step){ g.strokeStyle="#2A3340"; g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(w-4,Y(v)); g.stroke();
     g.fillStyle="#5F6B7C"; g.fillText(String(Math.abs(v)<1e-9?0:+v.toFixed(1)),L-4,Y(v)); }
   g.fillStyle="rgba(255,255,255,.045)"; spansOf(p,t0,tNow,(a,b)=>g.fillRect(X(a),T,X(b)-X(a),B-T));
   g.lineWidth=1.5; g.lineJoin="round";
   keys.forEach((k,i)=>{ g.strokeStyle=XYZ[i]; g.beginPath(); let pen=false, prev=null;
-    for(const s of buf){ if(s.t<t0) continue; const jump=prev!==null && Math.abs(s[k]-prev)>300;      // turn wraps at 180
+    for(const s of buf){ if(s.t<t0) continue; const jump=wrap && prev!==null && Math.abs(s[k]-prev)>300;      // turn wraps at 180
       if(!pen||jump){ g.moveTo(X(s.t),Y(s[k])); pen=true; } else g.lineTo(X(s.t),Y(s[k])); prev=s[k]; }
     g.stroke(); });
 }
@@ -749,8 +754,10 @@ function drawRaw(now){
   for(const p of Object.values(pods)){
     const box=el("raw-"+p.side); if(box.hidden===p.live) box.hidden=!p.live;
     if(!p.live) continue; const s=p.side, c=p.buf[p.buf.length-1];
-    drawPlot(el("pa-"+s),p,["ax","ay","az"],t,3); drawPlot(el("pg-"+s),p,["pitch","roll","yaw"],t,60); drawBand(el("pb-"+s),p,t);
+    drawPlot(el("pa-"+s),p,["ax","ay","az"],t,3,false); drawPlot(el("pr-"+s),p,["gx","gy","gz"],t,100,false);
+    drawPlot(el("pg-"+s),p,["pitch","roll","yaw"],t,60,true); drawBand(el("pb-"+s),p,t);
     if(c){ el("acc-"+s).innerHTML=`<i class="vx">x ${sg(c.ax,2,4)}</i><i class="vy">y ${sg(c.ay,2,4)}</i><i class="vz">z ${sg(c.az,2,4)}</i>`;
+           el("gyr-"+s).innerHTML=`<i class="vx">x ${sg(c.gx,0,4)}</i><i class="vy">y ${sg(c.gy,0,4)}</i><i class="vz">z ${sg(c.gz,0,4)}</i>`;
            el("ang-"+s).innerHTML=`<i class="vx">pitch ${sg(c.pitch,0,3)}</i><i class="vy">roll ${sg(c.roll,0,3)}</i><i class="vz">turn ${sg(c.yaw,0,3)}</i>`; }
   }
 }

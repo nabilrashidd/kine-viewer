@@ -159,6 +159,19 @@ header.bar{
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i{width:14px;height:2px;display:inline-block}
 
+/* both feet live: one line per foot under the view buttons */
+.feet{
+  margin-top:8px;display:inline-flex;flex-direction:column;gap:3px;
+  font-family:var(--f-mono);font-size:10.5px;letter-spacing:.03em;color:var(--muted);
+  background:rgba(14,17,22,.80);border:1px solid var(--line);padding:6px 9px;max-width:100%;
+}
+.feet[hidden]{display:none}
+.feet .row{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+.feet b{font-weight:600}
+.feet .L{color:#4EA8FF} .feet .R{color:#FF8A3D}
+.feet .warn{color:var(--warn)} .feet .bad{color:var(--bad)}
+@media (max-width:600px){ .feet{font-size:9.5px;padding:4px 7px} .feet .opt{display:none} }
+
 /* ---------- timeline ---------- */
 .timeline{
   padding:10px 16px 14px;
@@ -254,6 +267,16 @@ section.block > h2{
 .xyz{padding:10px 16px 14px;background:var(--surface);border-top:1px solid var(--line)}
 .xyz canvas{display:block;width:100%;height:110px;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--line-soft)}
 .xyz .tl-head span:last-child{text-transform:none;letter-spacing:0}
+/* one column per pod when two are connected, left foot on the left */
+.xyz-cols{display:grid;grid-template-columns:1fr;gap:0 16px}
+.xyz-cols.two{grid-template-columns:1fr 1fr}
+.xyz-col{min-width:0}
+.xyz-col[hidden]{display:none}
+.xyz-who{font-family:var(--f-mono);font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px}
+.xyz-who[hidden]{display:none}
+.xyz-who.L{color:#4EA8FF} .xyz-who.R{color:#FF8A3D}
+.xyz-cols.two .tl-head{flex-wrap:wrap;gap:2px 8px}
+@media (max-width:700px){ .xyz-cols.two{grid-template-columns:1fr} }
 .strip-wrap{display:flex;flex-direction:column;gap:10px}
 .strip{position:relative}
 .strip .cap{
@@ -378,11 +401,14 @@ section.block > h2{
         <canvas id="scene"></canvas>
         <div class="badge" id="badge" hidden></div>
         <div class="stage-overlay">
-          <div class="plane-row">
-            <button class="plane" data-view="sagittal" aria-pressed="false">Sagittal</button>
-            <button class="plane" data-view="frontal" aria-pressed="false">Frontal</button>
-            <button class="plane" data-view="transverse" aria-pressed="false">Transverse</button>
-            <button class="plane" data-view="free" aria-pressed="true">Free</button>
+          <div>
+            <div class="plane-row">
+              <button class="plane" data-view="sagittal" aria-pressed="false">Sagittal</button>
+              <button class="plane" data-view="frontal" aria-pressed="false">Frontal</button>
+              <button class="plane" data-view="transverse" aria-pressed="false">Transverse</button>
+              <button class="plane" data-view="free" aria-pressed="true">Free</button>
+            </div>
+            <div class="feet" id="feet" hidden aria-live="off"></div>
           </div>
           <div class="legend">
             <span><i style="background:var(--ax-x)"></i>X toe</span>
@@ -409,16 +435,34 @@ section.block > h2{
       </div>
 
       <div class="xyz">
-        <div class="tl-head">
-          <span>Acceleration x / y / z (g) &mdash; last 6 s</span>
-          <span id="xyz-acc"></span>
+        <div class="xyz-cols" id="xyz-cols">
+          <div class="xyz-col" id="xyz-col1">
+            <div class="xyz-who" id="xyz-who1" hidden></div>
+            <div class="tl-head">
+              <span>Acceleration x / y / z (g) &mdash; last 6 s</span>
+              <span id="xyz-acc"></span>
+            </div>
+            <canvas id="xyz-acc-cv" aria-label="Acceleration x, y and z over the last 6 seconds"></canvas>
+            <div class="tl-head">
+              <span>Gyro x / y / z (&deg;/s) &mdash; last 6 s</span>
+              <span id="xyz-gyr"></span>
+            </div>
+            <canvas id="xyz-gyr-cv" aria-label="Gyro x, y and z over the last 6 seconds"></canvas>
+          </div>
+          <div class="xyz-col" id="xyz-col2" hidden>
+            <div class="xyz-who" id="xyz-who2"></div>
+            <div class="tl-head">
+              <span>Acceleration x / y / z (g) &mdash; last 6 s</span>
+              <span id="xyz-acc2"></span>
+            </div>
+            <canvas id="xyz-acc-cv2" aria-label="Second pod: acceleration x, y and z over the last 6 seconds"></canvas>
+            <div class="tl-head">
+              <span>Gyro x / y / z (&deg;/s) &mdash; last 6 s</span>
+              <span id="xyz-gyr2"></span>
+            </div>
+            <canvas id="xyz-gyr-cv2" aria-label="Second pod: gyro x, y and z over the last 6 seconds"></canvas>
+          </div>
         </div>
-        <canvas id="xyz-acc-cv" aria-label="Acceleration x, y and z over the last 6 seconds"></canvas>
-        <div class="tl-head">
-          <span>Gyro x / y / z (&deg;/s) &mdash; last 6 s</span>
-          <span id="xyz-gyr"></span>
-        </div>
-        <canvas id="xyz-gyr-cv" aria-label="Gyro x, y and z over the last 6 seconds"></canvas>
         <div class="legend">
           <span><i style="background:var(--ax-x)"></i>X toe</span>
           <span><i style="background:var(--ax-y)"></i>Y left</span>
@@ -432,6 +476,8 @@ section.block > h2{
       <section class="block">
         <h2>Pod link</h2>
         <button class="btn primary" id="btn-connect">Connect pod over Bluetooth</button>
+        <button class="btn" id="btn-connect2" style="margin-top:8px" hidden>Add the second pod</button>
+        <p class="note" id="pod2-note" hidden></p>
         <div class="btn-row" style="margin-top:8px">
           <button class="btn" id="btn-zero" disabled>Zero / level</button>
           <button class="btn" id="btn-recal" disabled>Recalibrate</button>
@@ -450,7 +496,9 @@ section.block > h2{
           <p class="note" id="nav-state">ESKF firmware</p>
         </div>
         <p class="note" id="ble-note">
-          Advertises as <code>Kinesthesia-Pod</code>. Needs Chrome or Edge. If the device
+          Advertises as <code>Kine-Left</code> / <code>Kine-Right</code> (older firmware:
+          <code>Kinesthesia-Pod</code>). Connect one, then add the other to see both feet
+          in 3D. Needs Chrome or Edge, or Bluefy on iPhone. If the device
           picker never opens, the frame is blocking Web Bluetooth &mdash; open the standalone
           <code>gait_viewer.html</code> instead.
         </p>
@@ -477,6 +525,12 @@ section.block > h2{
           <button class="btn" id="btn-rec-erase">Erase the pod's flash</button>
         </div>
         <div id="rec-list" style="margin-top:8px"></div>
+        <p class="note" id="rec-two" hidden style="color:var(--warn)">
+          Two pods connected: <b>Record on both pods</b>, Sync flash and Mark go to
+          both. Record to this device, the list, Download and Erase are for the
+          first pod only. Get the second pod's file with <code>two.html</code> or
+          <code>tools/krec.py pull</code>.
+        </p>
         <p class="note">
           <b>Record to this device</b> streams every raw sensor sample, the mic's
           level track, the steps and the clocks to this browser and saves a
@@ -1141,11 +1195,13 @@ function drawTrail(){
   }
 }
 
-function render(q,pos){
+function render(q,pos,liveShoes){
   VM=viewMatrix();
   ctx.clearRect(0,0,W,H);
   drawGround();
-  const shoes = pose.on && poseShoes.length ? poseShoes : [{q,pos,tint:null}];
+  /* pose mode, or both pods live, or the one shoe as before (untinted) */
+  const shoes = pose.on && poseShoes.length ? poseShoes
+              : liveShoes && liveShoes.length ? liveShoes : [{q,pos,tint:null}];
   for(const s of shoes) drawShadow(s.q,s.pos);
   const bucket=[];
   for(const s of shoes){ drawMesh(shoeMesh,s.q,s.pos,bucket,s.tint); drawMesh(podMesh,s.q,s.pos,bucket); }
@@ -1160,7 +1216,8 @@ function render(q,pos){
     ctx.fill();
   }
   drawTrail();
-  drawAxes(q,pos);
+  if(liveShoes && liveShoes.length && !pose.on){ for(const s of liveShoes) drawAxes(s.q,s.pos); }
+  else drawAxes(q,pos);
 }
 
 /* =====================================================================
@@ -1350,13 +1407,23 @@ const el=id=>document.getElementById(id);
 
 /* ---- x / y / z plots under the shoe: one entry per motion packet ---- */
 const XYZ_SPAN_MS=6000;
+let xyzTwo=false;                      // second pod's column shown
 const xyzBuf=[];                       // {t, a:[x,y,z] g, g:[x,y,z] deg/s}
 function xyzPush(a,g){
   const t=performance.now();
   xyzBuf.push({t,a:a.slice(),g:g.slice()});
   while(xyzBuf.length && xyzBuf[0].t<t-XYZ_SPAN_MS-500) xyzBuf.shift();
 }
-function drawXYZ(cv,key,minSpan,digits,capId){
+const xyzBuf2=[];                      // the second pod's, same layout
+function xyzPush2(a,g){
+  const t=performance.now();
+  xyzBuf2.push({t,a:a.slice(),g:g.slice()});
+  while(xyzBuf2.length && xyzBuf2[0].t<t-XYZ_SPAN_MS-500) xyzBuf2.shift();
+}
+/* buf: what is drawn. rangeBufs: what sets the y-scale - both pods' buffers
+   when both are shown, so the two feet are drawn to the same scale */
+function drawXYZ(cv,key,minSpan,digits,capId,buf,rangeBufs){
+  buf=buf||xyzBuf;
   const dpr=Math.min(window.devicePixelRatio||1,2);
   const w=cv.clientWidth||300, h=cv.clientHeight||110;
   if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){ cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr); }
@@ -1365,7 +1432,8 @@ function drawXYZ(cv,key,minSpan,digits,capId){
   c.clearRect(0,0,w,h);
   const now=performance.now(), t0=now-XYZ_SPAN_MS;
   let lo=Infinity, hi=-Infinity;
-  for(const s of xyzBuf){ if(s.t<t0) continue; for(const v of s[key]){ if(v<lo) lo=v; if(v>hi) hi=v; } }
+  for(const b of (rangeBufs||[buf]))
+    for(const s of b){ if(s.t<t0) continue; for(const v of s[key]){ if(v<lo) lo=v; if(v>hi) hi=v; } }
   if(!isFinite(lo)){ lo=-minSpan/2; hi=minSpan/2; }
   const mid=(lo+hi)/2, sp=Math.max(minSpan,(hi-lo)*1.1); lo=mid-sp/2; hi=mid+sp/2;
   const X=t=>(t-t0)/XYZ_SPAN_MS*w, Y=v=>h-3-(v-lo)/(hi-lo)*(h-6);
@@ -1374,12 +1442,12 @@ function drawXYZ(cv,key,minSpan,digits,capId){
   const COL=["--ax-x","--ax-y","--ax-z"].map(v=>css.getPropertyValue(v).trim()||"#ccc");
   for(let j=0;j<3;j++){
     c.strokeStyle=COL[j]; c.lineWidth=1.4; c.beginPath(); let first=true;
-    for(const s of xyzBuf){ if(s.t<t0) continue; const x=X(s.t), y=Y(s[key][j]); if(first){ c.moveTo(x,y); first=false; } else c.lineTo(x,y); }
+    for(const s of buf){ if(s.t<t0) continue; const x=X(s.t), y=Y(s[key][j]); if(first){ c.moveTo(x,y); first=false; } else c.lineTo(x,y); }
     c.stroke();
   }
   c.fillStyle="#5F6B7C"; c.font="10px IBM Plex Mono, monospace";
   c.fillText(hi.toFixed(digits),4,11); c.fillText(lo.toFixed(digits),4,h-5);
-  const last=xyzBuf[xyzBuf.length-1];
+  const last=buf[buf.length-1];
   el(capId).innerHTML = last
     ? ["x","y","z"].map((n,j)=>"<span style=\"color:"+COL[j]+"\">"+n+" "+(last[key][j]>=0?"+":"−")+Math.abs(last[key][j]).toFixed(digits)+"</span>").join(" &nbsp;")
     : "—";
@@ -1770,8 +1838,11 @@ function recPaint(){
   el("rec-block").hidden=!rec.have;
   el("btn-rec-phone").setAttribute("aria-pressed",String(rec.phone));
   el("btn-rec-phone").textContent=rec.phone?"Stop and save":"Record to this device";
-  el("btn-rec-pod").setAttribute("aria-pressed",String(rec.pod));
-  el("btn-rec-pod").textContent=rec.pod?"Stop pod recording":"Record on the pod";
+  const both=!!pod2.nusRx, podOn=rec.pod||(both&&pod2.recOn);
+  el("rec-two").hidden=!both;
+  el("btn-rec-pod").setAttribute("aria-pressed",String(podOn));
+  el("btn-rec-pod").textContent=both ? (podOn?"Stop both pods":"Record on both pods")
+                                     : (rec.pod?"Stop pod recording":"Record on the pod");
   let t=[];
   if(rec.phone){ const s=(performance.now()-rec.t0)/1000;
     t.push("this device: "+Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0")+", "+(rec.bytes/1048576).toFixed(2)+" MB"+(rec.lostPk?", "+rec.lostPk+" packets lost":"")); }
@@ -1840,12 +1911,16 @@ function recList(){
   });
 }
 el("btn-rec-phone").addEventListener("click",()=>sendLed(rec.phone?"Rp0":"Rp"));
+/* flash recording, sync flash and marks go to the second pod too, so the
+   two files cover the same run; streaming to this device, the list, the
+   download and the erase stay with the first pod */
 el("btn-rec-pod").addEventListener("click",()=>{
   const dur=REC_DUR[+el("s-rec-dur").value];
-  sendLed(rec.pod?"Rf0":(dur?"Rf"+dur:"Rf"));
+  const on=rec.pod||(pod2.nusRx&&pod2.recOn);
+  sendBoth(on?"Rf0":(dur?"Rf"+dur:"Rf"));
 });
-el("btn-rec-sync").addEventListener("click",()=>sendLed("Rs"));
-el("btn-rec-mark").addEventListener("click",()=>sendLed("Rm"));
+el("btn-rec-sync").addEventListener("click",()=>sendBoth("Rs"));
+el("btn-rec-mark").addEventListener("click",()=>sendBoth("Rm"));
 el("btn-rec-list").addEventListener("click",()=>{ rec.list=[]; sendLed("Rl"); });
 el("btn-rec-erase").addEventListener("click",()=>{
   if(!rec.eraseArm){ rec.eraseArm=true; el("btn-rec-erase").textContent="Tap again to erase everything";
@@ -1862,6 +1937,8 @@ function onLedText(e){
   while((nl=ledBuf.indexOf("\n"))>=0){
     const line=ledBuf.slice(0,nl).trim(); ledBuf=ledBuf.slice(nl+1);
     if(!line) continue;
+    const sdm=line.match(/^# side (\S) \(/);
+    if(sdm){ if(sdm[1]==="L"||sdm[1]==="R") mainSide=sdm[1]; pod2Paint(); continue; }
     ledLog(line);
     if(/^# (rec|session|\d+ session|flash erased|erasing|mark|download)/.test(line)) recLine(line);
     const bm=line.match(/^BENCH ([01])/);
@@ -1965,6 +2042,7 @@ async function connect(){
       hasLeds=true; ledUiEnabled(true);
       sendLed("?");                        /* ask the ring what it is doing */
       if(navFw) sendLed("B");              /* and which settings the filter runs */
+      if(navFw) sendLed("S");              /* and which foot it is on (for a second pod) */
     }catch(e){
       /* say why. A disabled button with no explanation is worse than an error. */
       ledRx=null; hasLeds=false; ledUiEnabled(false);
@@ -1993,6 +2071,7 @@ async function connect(){
     }catch(e){ hasOdom=false; }   // older firmware: orientation only
     live=true;
     clearStepState();
+    xyzBuf.length=0; trail.length=0;       /* no synthetic samples or trail in live mode */
     odomWrap.prev=null; odomWrap.off=[0,0,0]; lastStride=null;
     el("nav-row").hidden=!navFw;
     /* The shoe stays on its fixed point, as in the builds that looked right on
@@ -2017,11 +2096,14 @@ async function connect(){
         ? "Live pod data is driving the shoe, including dead-reckoned position \u2014 which drifts until the accelerometer is calibrated."
         : "Live pod data is driving the shoe's orientation. Dead reckoning is off, so the shoe rotates in place and cannot drift. Turn it on under Simulation if you want to watch the position estimate.";
     setNote("Connected to "+(bleDevice.name||"pod")+".","ok");
+    mainSide=sideOf(bleDevice.name);
+    pod2Paint();
   }catch(err){
     setNote("Could not connect: "+err.message,"bad");
   }
 }
 function onDisconnect(){
+  mainSide="";
   if(rec.phone) recFinishPhone(false);         /* keep what arrived */
   if(rec.dl){ el("rec-state").textContent="download interrupted"; rec.dl=null; }
   rec.have=false; rec.pod=false; recPaint();
@@ -2037,6 +2119,11 @@ function onDisconnect(){
   el("btn-zero").disabled=true; el("btn-recal").disabled=true;
   el("rate-label").textContent="— Hz";
   setNote("Pod disconnected. Back to the synthetic runner.");
+  /* the second pod only adds a shoe to the first one's view, so it goes too
+     (after live is off, so its message says so); connect the first again,
+     then add the second */
+  if(pod2.dev){ try{ pod2.dev.gatt.disconnect(); }catch(e){} }
+  pod2Paint();
 }
 let lastPktT=0;
 function onMotion(e){
@@ -2176,10 +2263,241 @@ function paintNav(){
   el("btn-respos").disabled=!cmdChar||!hasOdom;
 }
 async function sendCmd(code){
+  sendCmd2(code);                       /* Zero, recalibrate, modes: both feet alike */
   if(!cmdChar) return;
   try{ await cmdChar.writeValue(new Uint8Array([code])); }
   catch(err){ setNote("Command failed: "+err.message,"bad"); }
 }
+
+/* =====================================================================
+   second pod
+   ---------------------------------------------------------------------
+   The pod connected with the main button drives everything it always did:
+   plots, timeline, step panels, trust checks, LED ring, recordings list.
+   A second pod adds its own shoe to the 3-D view, nothing more is taken
+   over from it. Each shoe turns on its own fixed point at hip width: the
+   left foot on +Y (pod frame: +X toe, +Y left, +Z up), the right on -Y.
+   Each pod's yaw is its own, counted from its own Zero, so the two shoes
+   point the same way only after both were zeroed standing with the feet
+   parallel. The Zero button goes to both for that reason.
+   ===================================================================== */
+const HIP=0.18;                                 // drawn spacing of the two shoes, m
+const SIDE_NAME={L:"Left",R:"Right"};
+const otherSide=s=>s==="L"?"R":"L";
+const sideOf=name=>/left/i.test(name||"")?"L":/right/i.test(name||"")?"R":"";
+let mainSide="";                                // side of the pod on the main button
+const pod2={dev:null, name:"", side:"", chip:"", q:[1,0,0,0], acc:[0,0,1], gyr:[0,0,0],
+            pkts:0, rate:0, rateT:0, lastMs:0, podHz:0, init:false, ground:null,
+            stride:null, cmd:null, nusRx:null, nusBuf:"", queue:Promise.resolve(),
+            mode:"", recOn:false, recNote:"", followMs:0, test:false};
+
+/* live = connected over Bluetooth, followed through the relay, or the test hook */
+function pod2Live(){
+  return !!(pod2.dev && pod2.dev.gatt && pod2.dev.gatt.connected) ||
+         (following && Date.now()-pod2.followMs<2000) || pod2.test;
+}
+/* the two sides, settled: names first, the S reply over them, and if a pod
+   has an old firmware with no side, it is whatever the other one is not */
+function sides(){
+  let m=mainSide, s=pod2.side;
+  if(!m && s) m=otherSide(s);
+  if(!s && m) s=otherSide(m);
+  if(!m && !s){ m="R"; s="L"; }                 // two old-firmware pods: a guess, said so below
+  if(m===s) s=otherSide(m);                     // two pods claiming one side
+  return {main:m, second:s};
+}
+
+function sendCmd2(code){
+  if(!pod2.cmd) return;
+  pod2.queue=pod2.queue.then(()=>pod2.cmd.writeValue(new Uint8Array([code])))
+    .catch(err=>pod2Note("command failed: "+err.message,"bad"));
+}
+function sendText2(text){
+  if(!pod2.nusRx) return;
+  const b=new TextEncoder().encode(text);
+  pod2.queue=pod2.queue.then(()=>pod2.nusRx.writeValueWithoutResponse
+      ? pod2.nusRx.writeValueWithoutResponse(b) : pod2.nusRx.writeValue(b))
+    .catch(err=>pod2Note("send failed: "+err.message,"bad"));
+}
+/* recorder commands that make sense on both feet at once */
+function sendBoth(text){ sendLed(text); sendText2(text); }
+
+function pod2Note(msg,tone){
+  const n=el("pod2-note");
+  n.hidden=!msg; n.textContent=msg||"";
+  n.style.color = tone==="bad" ? "var(--bad)" : (tone==="ok" ? "var(--ok)" : "var(--muted)");
+}
+function pod2Paint(){
+  const b=el("btn-connect2");
+  const canAdd = canBle && live && !following && !!bleDevice;
+  b.hidden = !canAdd && !pod2.dev;
+  const sd=sides();
+  b.textContent = pod2.dev ? "Disconnect "+(pod2.name||"the second pod")
+                : "Add "+(mainSide ? "Kine-"+SIDE_NAME[otherSide(mainSide)] : "the second pod");
+  if(pod2.dev){
+    const bits=[SIDE_NAME[sd.second]+" foot: "+(pod2.name||"pod")+(pod2.chip?" (chip "+pod2.chip+")":"")];
+    if(pod2.mode) bits.push(pod2.mode);
+    if(pod2.recNote) bits.push(pod2.recNote);
+    pod2Note(bits.join(" · "),"ok");
+  }
+  recPaint();
+}
+
+function onMotion2(d){
+  pod2.q=qNorm([d.getInt16(0,true)/10000, d.getInt16(2,true)/10000,
+                d.getInt16(4,true)/10000, d.getInt16(6,true)/10000]);
+  pod2.acc=[d.getInt16(8,true)/1000, d.getInt16(10,true)/1000, d.getInt16(12,true)/1000];
+  pod2.gyr=[d.getInt16(14,true)/10, d.getInt16(16,true)/10, d.getInt16(18,true)/10];
+  xyzPush2(pod2.acc,pod2.gyr);
+  pod2.pkts++;
+  const now=performance.now();
+  pod2.lastMs=now;
+  if(now-pod2.rateT>1000){ pod2.rate=pod2.pkts; pod2.pkts=0; pod2.rateT=now; }
+}
+function onStride2(d){
+  const fl=d.getUint8(15);
+  pod2.stride={len:d.getUint16(6,true), peak:d.getUint16(8,true),
+               contact:d.getUint16(10,true), flight:d.getUint16(12,true),
+               valid:(fl&1)!==0, abandoned:(fl&2)!==0, bench:(fl&4)!==0};
+}
+const POD2_H={
+  motion: e=>onMotion2(e.target.value),
+  stride: e=>onStride2(e.target.value),
+  status: e=>{ const d=e.target.value; pod2.podHz=d.getUint16(2,true); pod2.init=(d.getUint8(1)&1)!==0; },
+  live:   e=>{ pod2.ground=(e.target.value.getUint8(8)&1)!==0; }
+};
+function onText2(e){
+  pod2.nusBuf+=new TextDecoder().decode(e.target.value);
+  let nl, m;
+  while((nl=pod2.nusBuf.indexOf("\n"))>=0){
+    const line=pod2.nusBuf.slice(0,nl).trim(); pod2.nusBuf=pod2.nusBuf.slice(nl+1);
+    if(!line) continue;
+    if((m=line.match(/^# side (\S) \((\S+)\) chip (\w+)/))){
+      if(m[1]==="L"||m[1]==="R") pod2.side=m[1];
+      pod2.chip=m[3];
+    }
+    else if((m=line.match(/^# mode (\w+) \((\w+)\)/))) pod2.mode=(m[1]==="FREE"?"in-hand":"gait")+" settings"+(m[2]==="AUTO"?" (auto)":"");
+    else if((m=line.match(/^# rec flash session (\d+) started/))){ pod2.recOn=true; pod2.recNote="recording to its flash (session "+m[1]+")"; }
+    else if((m=line.match(/^# rec flash session (\d+) saved: (\d+) KB/))){ pod2.recOn=false;
+      pod2.recNote="session "+m[1]+" saved on it ("+m[2]+" KB): download it with two.html or tools/krec.py pull"; }
+    else if(/^# rec: flash full/.test(line)){ pod2.recOn=false; pod2.recNote="its flash is full: download, then erase it in two.html"; }
+    else if(/^# rec: /.test(line)){
+      pod2.recNote=line.slice(7);
+      if(/flash/.test(line)&&/first|busy|full|found|built|already/.test(line)) pod2.recOn=pod2.recOn&&/already/.test(line);
+    }
+    else continue;
+    pod2Paint();
+  }
+}
+
+async function connect2(){
+  if(pod2.dev){ try{ pod2.dev.gatt.disconnect(); }catch(e){} return; }
+  if(!navigator.bluetooth || !live || !bleDevice){
+    pod2Note("Connect the first pod with the button above, then add the second.","bad"); return;
+  }
+  const want = mainSide ? "Kine-"+SIDE_NAME[otherSide(mainSide)] : "";
+  try{
+    pod2Note("Choose "+(want||"the other pod")+" in the browser's device picker…");
+    /* by name when the first pod said which side it is, so the picker offers
+       only the other one; otherwise every pod, and the one already connected
+       is refused below */
+    const dev=await navigator.bluetooth.requestDevice({
+      filters: want ? [{namePrefix:want}] : [{services:[SVC]}],
+      optionalServices:[SVC,NUS]
+    });
+    if(dev===bleDevice || (dev.id && bleDevice && dev.id===bleDevice.id)){
+      pod2Note("That is the pod that is already connected. Choose the other one.","bad"); return;
+    }
+    xyzBuf2.length=0; trail.length=0;
+    Object.assign(pod2,{dev, name:dev.name||"", side:sideOf(dev.name), chip:"", q:[1,0,0,0],
+                        acc:[0,0,1], gyr:[0,0,0], pkts:0, rate:0, rateT:performance.now(),
+                        lastMs:0, ground:null, stride:null, mode:"", recOn:false, recNote:"",
+                        cmd:null, nusRx:null, nusBuf:"", queue:Promise.resolve()});
+    dev.addEventListener("gattserverdisconnected",onDisconnect2);
+    const server=await dev.gatt.connect();
+    const svc=await server.getPrimaryService(SVC);
+    /* the same handler objects every time: reconnecting the same pod can hand
+       back the same characteristic, and the browser then skips a listener it
+       already has instead of delivering every packet twice */
+    const sub=async(uuid,h)=>{
+      try{ const c=await svc.getCharacteristic(uuid); await c.startNotifications();
+           c.addEventListener("characteristicvaluechanged",h); return true; }
+      catch(e){ return false; }
+    };
+    try{ pod2.cmd=await svc.getCharacteristic(CHR_CMD); }catch(e){ pod2.cmd=null; }
+    if(!(await sub(CHR_MOTION,POD2_H.motion))) throw new Error("it sends no motion data");
+    await sub(CHR_STATUS,POD2_H.status);
+    await sub(CHR_LIVE,POD2_H.live);
+    await sub(CHR_STRIDE,POD2_H.stride);
+    try{
+      const nus=await server.getPrimaryService(NUS);
+      pod2.nusRx=await nus.getCharacteristic(NUS_RX);
+      const tx=await nus.getCharacteristic(NUS_TX);
+      await tx.startNotifications();
+      tx.addEventListener("characteristicvaluechanged",onText2);
+      sendText2("S"); sendText2("B");          /* its side and chip, and its mode */
+    }catch(e){ pod2.nusRx=null; }
+    /* room for two shoes, seen from behind: the left foot on the left of the
+       screen, not mirrored as from the toe */
+    setView("free");
+    Object.assign(cam,{az:Math.PI-0.55, el:0.32, dist:Math.max(cam.dist,1.1)});
+    const sd=sides();
+    setNote("Both feet live: "+SIDE_NAME[sd.main]+" ("+(bleDevice.name||"pod")+") drives the plots and panels, "+
+            SIDE_NAME[sd.second]+" ("+(pod2.name||"pod")+") is the second shoe. Stand still with the feet parallel, then Zero / level (it zeroes both).","ok");
+  }catch(err){
+    const was=pod2.dev; pod2.dev=null; pod2.cmd=null; pod2.nusRx=null;
+    if(was){ if(was.removeEventListener) was.removeEventListener("gattserverdisconnected",onDisconnect2);   /* keep this message */
+             try{ was.gatt.disconnect(); }catch(e){} }
+    pod2Note(/cancel/i.test(err.message) ? "No second pod chosen."
+             : "Could not connect the second pod: "+err.message,"bad");
+  }
+  pod2Paint();
+}
+function onDisconnect2(){
+  const name=pod2.name;
+  Object.assign(pod2,{dev:null, cmd:null, nusRx:null, recOn:false, ground:null, stride:null, rate:0});
+  pod2Note(!name ? "" : live ? name+" disconnected. Only the first pod is drawn now."
+                             : name+" disconnected with the first pod. Connect the first again, then add the second.","");
+  pod2Paint();
+}
+
+/* one line per foot over the 3-D view, left foot first */
+function paintFeet(){
+  const box=el("feet");
+  const two = live && pod2Live() && !pose.on;
+  if(box.hidden===two) box.hidden=!two;
+  if(!two) return;
+  const sd=sides(), now=performance.now();
+  const feet=[
+    {side:sd.main, name:following?relayName:(bleDevice&&bleDevice.name)||"pod", q:liveQ, hz:liveRate,
+     ground: navFw ? podStanceS : (hasOdom ? odom.stance : null),
+     stride: lastStride, stale:false, main:true},
+    {side:sd.second, name:pod2.name, q:pod2.q, hz:pod2.rate,
+     ground:pod2.ground, stride:pod2.stride, stale:!following && !pod2.test && now-pod2.lastMs>1500, main:false}
+  ].sort((a,b)=>a.side==="L"?-1:1);
+  const sg=v=>(v>=0?"+":"−")+Math.abs(v).toFixed(1)+"°";
+  const rows=feet.map(f=>{
+    const e=qToEuler(f.q);
+    const st=f.stride && f.stride.valid && !f.stride.bench && !f.stride.abandoned
+      ? "stride "+(f.stride.len/1000).toFixed(2)+" m, contact "+f.stride.contact+" ms" : "no stride yet";
+    return '<div class="row"><b class="'+f.side+'">● '+SIDE_NAME[f.side]+'</b>'+
+      (f.name?'<span class="opt">'+f.name.replace(/[<&]/g,"")+'</span>':'')+
+      '<span>pitch '+sg(e[1])+' roll '+sg(e[0])+' yaw '+sg(e[2])+'</span>'+
+      (f.ground===null?'':'<span>'+(f.ground?"on ground":"in the air")+'</span>')+
+      (f.stale?'<span class="bad">no data</span>':'<span class="'+(f.hz&&f.hz<35?"bad":f.hz&&f.hz<45?"warn":"")+'">'+(f.hz||0)+' Hz</span>')+
+      '<span class="opt">'+st+'</span>'+
+      (f.main?'<span class="opt">← plots and panels</span>':'')+'</div>';
+  });
+  /* the two yaws come from two pods that each count from their own Zero */
+  const yL=qToEuler(feet[0].q)[2], yR=qToEuler(feet[1].q)[2];
+  let gap=yR-yL; while(gap>180) gap-=360; while(gap<-180) gap+=360;
+  const unsure = !mainSide && !pod2.side;
+  rows.push('<div class="row"><span'+(Math.abs(gap)>10?' class="warn"':'')+'>yaw right − left '+sg(gap)+
+    (Math.abs(gap)>10?' — stand with the feet parallel and press Zero / level':'')+'</span>'+
+    (unsure?'<span class="warn">sides guessed: neither pod says which foot it is on</span>':'')+'</div>');
+  box.innerHTML=rows.join("");
+}
+setInterval(paintFeet,200);
 
 /* ---- camera interaction ---- */
 let dragging=false,lx=0,ly=0;
@@ -2315,6 +2633,7 @@ el("btn-connect").addEventListener("click",()=>{
   if(live && bleDevice && bleDevice.gatt.connected){ bleDevice.gatt.disconnect(); }
   else connect();
 });
+el("btn-connect2").addEventListener("click",connect2);
 el("btn-zero").addEventListener("click",()=>sendCmd(1));
 el("btn-recal").addEventListener("click",()=>sendCmd(2));
 el("btn-respos").addEventListener("click",()=>{ trail.length=0; sendCmd(4);
@@ -2407,14 +2726,18 @@ function viewLabel(){
    arrived over Bluetooth. Nothing else in the page changes: the same
    liveQ/liveAcc/liveGyr feed the same renderer.
    ===================================================================== */
-let shareOn=false, following=false, relayOk=false, lastRelayMs=0;
+let shareOn=false, following=false, relayOk=false, lastRelayMs=0, relayName="";
 
 async function relayPost(){
   if(!shareOn || !live) return;
   try{
     await fetch("/state",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({q:liveQ,a:liveAcc,g:liveGyr,rate:liveRate,
-                           odom:hasOdom?odom:null,t:Date.now()})});
+                           odom:hasOdom?odom:null,t:Date.now(),
+                           /* the second pod's shoe, for a following screen */
+                           side:sides().main, name:bleDevice?bleDevice.name||"":"", stride:lastStride,
+                           pod2:pod2Live()?{q:pod2.q,a:pod2.acc,g:pod2.gyr,rate:pod2.rate,side:sides().second,
+                                            name:pod2.name,ground:pod2.ground,stride:pod2.stride}:null})});
     relayOk=true;
   }catch(e){ relayOk=false; }
 }
@@ -2435,6 +2758,18 @@ async function relayPoll(){
     xyzPush(liveAcc,liveGyr);
     liveRate=j.state.rate||0;
     if(j.state.odom){ Object.assign(odom,j.state.odom); hasOdom=true; }
+    relayName=j.state.name||"";
+    if(j.state.stride!==undefined) lastStride=j.state.stride;
+    if(j.state.pod2){
+      const p=j.state.pod2;
+      if(Date.now()-pod2.followMs>2000){          /* second shoe just appeared: view from behind */
+        setView("free"); Object.assign(cam,{az:Math.PI-0.55, el:0.32, dist:Math.max(cam.dist,1.1)});
+      }
+      pod2.q=qNorm(p.q); pod2.acc=p.a||[0,0,1]; pod2.gyr=p.g||[0,0,0]; pod2.rate=p.rate||0;
+      xyzPush2(pod2.acc,pod2.gyr);
+      pod2.side=p.side||""; pod2.name=p.name||""; pod2.ground=p.ground??null; pod2.stride=p.stride||null;
+      mainSide=j.state.side||""; pod2.followMs=Date.now();
+    }
     if(!following){
       following=true; live=true;
       clearStepState();
@@ -2610,7 +2945,17 @@ function frame(t){
     cam.target[2]+=(tz-cam.target[2])*k;
   }
 
-  render(q,pos);
+  /* both pods live: each shoe on its own point at hip width, tinted by foot.
+     With dead reckoning on, the second shoe rides beside the first. */
+  let liveShoes=null;
+  if(live && !pose.on && pod2Live()){
+    const sd=sides(), off=s=>s==="L"?HIP/2:-HIP/2;
+    liveShoes=[
+      {q, pos:[pos[0], pos[1]+off(sd.main), pos[2]], tint:FOOT_TINT[sd.main]},
+      {q:pod2.q, pos:[pos[0], pos[1]+off(sd.second), 0.11], tint:FOOT_TINT[sd.second]}
+    ];
+  }
+  render(q,pos,liveShoes);
 
   /* ---- readouts ---- */
   setAngle("pitch",pitch,45);
@@ -2647,9 +2992,30 @@ function frame(t){
   el("cap-gyr").textContent=gyrY.toFixed(0)+" °/s";
   drawStrip(el("strip-acc"),accHist,"#FF8A3D",1,4.4);
   drawStrip(el("strip-gyr"),gyrHist,"#4EA8FF",0,0.022);
-  drawXYZ(el("xyz-acc-cv"),"a",2,2,"xyz-acc");
-  drawXYZ(el("xyz-gyr-cv"),"g",100,0,"xyz-gyr");
-  el("xyz-note").textContent = live ? "every motion packet from the pod, shoe axes, biases removed"
+  /* second pod: its own column beside the first, the same y-scale for both */
+  const twoPlots = live && pod2Live();
+  if(twoPlots!==xyzTwo){
+    xyzTwo=twoPlots;
+    el("xyz-cols").classList.toggle("two",twoPlots);
+    el("xyz-col2").hidden=!twoPlots; el("xyz-who1").hidden=!twoPlots;
+  }
+  if(twoPlots){
+    const sd=sides();
+    for(const [i,s,nm] of [[1,sd.main,following?relayName:(bleDevice&&bleDevice.name)||""],[2,sd.second,pod2.name]]){
+      const w=el("xyz-who"+i), txt=SIDE_NAME[s]+" foot"+(nm?" \u00B7 "+nm:"");
+      if(w.textContent!==txt){ w.textContent=txt; w.className="xyz-who "+s; }
+      el("xyz-col"+i).style.order = s==="L" ? "0" : "1";
+    }
+  }
+  const both=twoPlots?[xyzBuf,xyzBuf2]:null;
+  drawXYZ(el("xyz-acc-cv"),"a",2,2,"xyz-acc",xyzBuf,both);
+  drawXYZ(el("xyz-gyr-cv"),"g",100,0,"xyz-gyr",xyzBuf,both);
+  if(twoPlots){
+    drawXYZ(el("xyz-acc-cv2"),"a",2,2,"xyz-acc2",xyzBuf2,both);
+    drawXYZ(el("xyz-gyr-cv2"),"g",100,0,"xyz-gyr2",xyzBuf2,both);
+  }
+  el("xyz-note").textContent = live && twoPlots ? "every motion packet from each pod, shoe axes, biases removed; both pods on the same scale"
+                              : live ? "every motion packet from the pod, shoe axes, biases removed"
                                     : "synthetic runner: only |a| (on z) and the pitch rate (on y) are modelled";
   drawDriftChart();
   updateGaitPanels();
@@ -2759,6 +3125,23 @@ function runChecks(){
     s: liveRate===0?"":(liveRate<35?"bad":(liveRate<45?"warn":"ok")),
     d: (liveRate||0)+" Hz"
   });
+  if(pod2Live()){
+    /* the second shoe gets the two checks that need nothing but its motion
+       packets: is it still sending, and does it read 1 g when at rest */
+    const who=SIDE_NAME[sides().second]+" pod";
+    const stale=!following && !pod2.test && performance.now()-pod2.lastMs>1500;
+    const a2=Math.hypot(pod2.acc[0],pod2.acc[1],pod2.acc[2]);
+    rows.push({
+      n:who+" packets",
+      s: stale?"bad":(pod2.rate===0?"":(pod2.rate<35?"bad":(pod2.rate<45?"warn":"ok"))),
+      d: stale?"no data for "+((performance.now()-pod2.lastMs)/1000).toFixed(1)+" s":(pod2.rate||0)+" Hz"
+    });
+    rows.push({
+      n:who+" gravity",
+      s: Math.abs(a2-1)>0.6?"":(Math.abs(a2-1)>0.08?"warn":"ok"),
+      d: a2.toFixed(3)+" g"
+    });
+  }
 
   box.innerHTML=rows.map(r=>
     '<div class="check '+(r.s||"")+'"><i></i><span class="n">'+r.n+
@@ -2820,6 +3203,27 @@ window.__podTest=function(patch){
   el("chip-source").className="chip live";
   el("src-label").textContent="Pod — live (test)";
   runChecks();
+};
+
+/* Test hook for the second shoe, alongside __podTest: from the console,
+     __podTest({q:[1,0,0,0],acc:1,rate:50}); __pod2Test({side:"L",q:[0.98,0,0.17,0]})
+   draws both feet with no hardware. Raw motion / stride packets go through
+   the real handlers: {motionPkt:[20 bytes]}, {stridePkt:[20 bytes]}.
+   __pod2Test(null) removes the second shoe. */
+window.__pod2Test=function(patch){
+  if(!patch){ pod2.test=false; runChecks(); return; }
+  pod2.test=true;
+  const dv=b=>new DataView(new Uint8Array(b).buffer);
+  if(patch.side!==undefined) pod2.side=patch.side;
+  if(patch.mainSide!==undefined) mainSide=patch.mainSide;
+  if(patch.name!==undefined) pod2.name=patch.name;
+  if(patch.q) pod2.q=qNorm(patch.q);
+  if(patch.acc!==undefined) pod2.acc=[0,0,patch.acc];
+  if(patch.rate!==undefined) pod2.rate=patch.rate;
+  if(patch.ground!==undefined) pod2.ground=patch.ground;
+  if(patch.motionPkt) onMotion2(dv(patch.motionPkt));
+  if(patch.stridePkt) onStride2(dv(patch.stridePkt));
+  runChecks(); paintFeet();
 };
 
 window.addEventListener("resize",resize);

@@ -481,6 +481,14 @@ section.block > h2{
         <button class="btn primary" id="btn-connect">Connect pod over Bluetooth</button>
         <button class="btn" id="btn-connect2" style="margin-top:8px" hidden>Add the second pod</button>
         <p class="note" id="pod2-note" hidden></p>
+        <div id="peer-row" hidden style="margin-top:8px">
+          <button class="btn" id="btn-peer" aria-pressed="false">Measure distance between pods</button>
+          <div class="btn-row" style="margin-top:8px;align-items:center">
+            <label class="note" for="in-peer-cm" style="margin:0">Pods held <input id="in-peer-cm" type="number" min="5" max="300" value="30" style="width:3.6em;background:var(--surface-2);border:1px solid var(--line);color:inherit;font:inherit;text-align:right;padding:4px"> cm apart</label>
+            <button class="btn" id="btn-peer-cal">Calibrate</button>
+          </div>
+          <p class="note" id="peer-note">Each pod listens for the other's Bluetooth signal and turns its strength into a distance. Rough (expect &plusmn;30&ndash;50&nbsp;%): good for near / far and for when the feet pass each other, not for centimetres. It takes radio time from the live view, so it is off until you switch it on. Calibrate once: hold the two pods still, the set distance apart.</p>
+        </div>
         <div class="btn-row" style="margin-top:8px">
           <button class="btn" id="btn-zero" disabled>Zero / level</button>
           <button class="btn" id="btn-recal" disabled>Recalibrate</button>
@@ -1995,6 +2003,7 @@ function onLedText(e){
     if(!line) continue;
     const sdm=line.match(/^# side (\S) \(/);
     if(sdm){ if(sdm[1]==="L"||sdm[1]==="R") mainSide=sdm[1]; pod2Paint(); continue; }
+    if(/^# peer/.test(line)){ peerLine(peer.main,line); continue; }
     if(!ringOnSecond()) ledLog(line);           /* the ring log follows the pod with the ring */
     if(/^# (rec|session|\d+ session|flash erased|erasing|mark|download)/.test(line)) recLine(line);
     const bm=line.match(/^BENCH ([01])/);
@@ -2165,6 +2174,7 @@ async function connect(){
 }
 function onDisconnect(){
   mainSide="";
+  Object.assign(peer.main, peerBlank());
   if(rec.phone) recFinishPhone(rec,false);     /* keep what arrived */
   if(rec.dl){ rec.msg="download interrupted"; rec.dl=null; }
   rec.have=false; rec.pod=false; recPaint();
@@ -2477,6 +2487,7 @@ function onText2(e){
       pod2Paint(); continue;
     }
     if(/^# (rec|session|\d+ session|flash erased|erasing|mark|download)/.test(line)){ recLineFor(rec2,line); continue; }
+    if(/^# peer/.test(line)){ peerLine(peer.second,line); continue; }
     if(ringOnSecond() && !/^#/.test(line)){ ledLog(line); ledReply(line); }
   }
 }
@@ -2555,11 +2566,70 @@ function onDisconnect2(){
   Object.assign(pod2,{dev:null, cmd:null, nusRx:null, ground:null, stride:null, rate:0, init:false,
                       hasOdom:false, hasMic:false, navFw:false, trail:[]});
   rec2.have=false; rec2.pod=false; rec2.list=[];
+  Object.assign(peer.second, peerBlank());
   if(ringWas) ledUiEnabled(!!ledRx);
   pod2Note(!name ? "" : live ? name+" disconnected. Only the first pod is drawn now."
                              : name+" disconnected with the first pod. Connect the first again, then add the second.","");
   pod2Paint(); recList();
 }
+
+/* ---- distance between the pods (firmware D1 / D0 / DC<cm>) ----
+   Each pod reports what it hears from the other: "# peer L rssi -583 dist 42
+   cm n 14/s" four times a second (rssi in 0.1 dBm, median of 0.5 s). Shown
+   as a number for now; not yet used to place the feet. */
+const peerBlank=()=>({on:false, rssi:null, cm:null, rate:0, ms:0, a1m:null, guess:true, asked:0, said:""});
+const peer={main:peerBlank(), second:peerBlank()};
+function peerLine(P,line){
+  let m;
+  if((m=line.match(/^# peer [LR?] rssi (-?\d+) dist (\d+) cm n (\d+)\/s/))){
+    P.rssi=+m[1]/10; P.cm=+m[2]; P.rate=+m[3]; P.ms=performance.now(); P.on=true;
+  }else if(/^# peer none/.test(line)){ P.on=true; P.rate=0; }
+  else if((m=line.match(/^# peer: ranging (on|off), A (-?[\d.]+) dBm at 1 m( \(guess)?/))){
+    P.on=m[1]==="on"; P.a1m=+m[2]; P.guess=!!m[3]; P.asked=0; if(!P.on){ P.cm=null; P.rssi=null; }
+  }else P.said=line.replace(/^# peer: ?/,"");
+  peerPaint();
+}
+function peerSend(text){ sendLed(text); sendText2(text); }
+function peerPaint(){
+  const two=live && pod2Live() && !following;
+  el("peer-row").hidden=!two;
+  if(!two) return;
+  const on=peer.main.on||peer.second.on;
+  el("btn-peer").setAttribute("aria-pressed",String(on));
+  el("btn-peer").textContent=on?"Stop measuring distance":"Measure distance between pods";
+  const now=performance.now(), sd=sides();
+  const silent=[peer.main,peer.second].filter(P=>P.asked && now-P.asked>2500);
+  let note="";
+  if(silent.length) note="No answer from "+silent.map(P=>P===peer.main?(bleDevice&&bleDevice.name||"the first pod"):(pod2.name||"the second pod")).join(" and ")+
+                         " \u2014 flash the firmware with pod-to-pod distance (command D).";
+  else if(on){
+    const g=[peer.main,peer.second].some(P=>P.guess);
+    note=(g?"Not calibrated yet: the numbers use a guessed signal strength at 1 m. ":"Calibrated. ")+
+         [[peer.main,sd.main],[peer.second,sd.second]].map(([P,s])=>SIDE_NAME[s]+" pod hears "+
+           (P.cm!=null && now-P.ms<1500 ? P.cm+" cm ("+P.rssi.toFixed(1)+" dBm, "+P.rate+"/s)" : "nothing yet")).join(" \u00B7 ");
+    const said=peer.main.said||peer.second.said; if(said) note+=" \u00B7 "+said;
+  }
+  if(note) el("peer-note").textContent=note;
+}
+/* the distance both pods agree on, or one if only one hears the other */
+function peerApart(){
+  const now=performance.now(), v=[peer.main,peer.second].filter(P=>P.cm!=null && now-P.ms<1500).map(P=>P.cm);
+  if(!v.length) return null;
+  return {cm: v.length===2 ? Math.round(Math.sqrt(v[0]*v[1])) : v[0], both: v.length===2, guess: peer.main.guess||peer.second.guess};
+}
+el("btn-peer").addEventListener("click",()=>{
+  const on=peer.main.on||peer.second.on, t=performance.now();
+  peerSend(on?"D0":"D1");
+  peer.main.asked=t; peer.second.asked=pod2.nusRx?t:0; peer.main.said=peer.second.said="";
+  setTimeout(peerPaint,2600);
+});
+el("btn-peer-cal").addEventListener("click",()=>{
+  const cm=Math.round(+el("in-peer-cm").value);
+  if(!(cm>=5 && cm<=300)) return;
+  peer.main.said=peer.second.said="";
+  peerSend("DC"+cm);
+});
+setInterval(peerPaint,500);
 
 /* one line per foot under the 3-D view, left foot first */
 function paintFeet(){
@@ -2593,6 +2663,9 @@ function paintFeet(){
   const yL=qToEuler(feet[0].q)[2], yR=qToEuler(feet[1].q)[2];
   let gap=yR-yL; while(gap>180) gap-=360; while(gap<-180) gap+=360;
   const unsure = !mainSide && !pod2.side;
+  const ap=peerApart();
+  if(ap) rows.push('<div class="row"><span>pods apart \u2248 <b>'+ap.cm+' cm</b> by Bluetooth signal'+
+    (ap.guess?' <span class="warn">(not calibrated)</span>':'')+(ap.both?'':' (one pod only)')+'</span><span class="opt">rough: \u00B130\u201350 %</span></div>');
   rows.push('<div class="row"><span'+(Math.abs(gap)>10?' class="warn"':'')+'>yaw right − left '+sg(gap)+
     (Math.abs(gap)>10?' — stand with the feet parallel and press Zero / level':'')+'</span>'+
     (unsure?'<span class="warn">sides guessed: neither pod says which foot it is on</span>':'')+'</div>');
@@ -2840,7 +2913,8 @@ async function relayPost(){
                            side:sides().main, name:bleDevice?bleDevice.name||"":"", stride:lastStride,
                            pod2:pod2Live()?{q:pod2.q,a:pod2.acc,g:pod2.gyr,rate:pod2.rate,side:sides().second,
                                             name:pod2.name,ground:pod2.ground,stride:pod2.stride,
-                                            odom:pod2.hasOdom?pod2.odom:null,free:pod2.free}:null})});
+                                            odom:pod2.hasOdom?pod2.odom:null,free:pod2.free}:null,
+                           apart:peerApart()})});
     relayOk=true;
   }catch(e){ relayOk=false; }
 }
@@ -2862,6 +2936,9 @@ async function relayPoll(){
     liveRate=j.state.rate||0;
     if(j.state.odom){ Object.assign(odom,j.state.odom); hasOdom=true; }
     relayName=j.state.name||"";
+    if(j.state.apart){ const a=j.state.apart, t=performance.now();
+      Object.assign(peer.main,{cm:a.cm,rssi:0,ms:t,guess:a.guess}); Object.assign(peer.second,{cm:a.both?a.cm:null,rssi:0,ms:t,guess:a.guess}); }
+    else peer.main.cm=peer.second.cm=null;
     if(j.state.stride!==undefined) lastStride=j.state.stride;
     if(j.state.pod2){
       const p=j.state.pod2;
